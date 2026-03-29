@@ -1,0 +1,24 @@
+
+> backend@1.0.0 dev
+> PORT=8083 nodemon index.js
+
+[33m[nodemon] 3.1.11[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node index.js`[39m
+[dotenv@17.2.4] injecting env (12) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+[dotenv@17.2.4] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+### LOADED DATABASE JS ###
+Env Check - PGHOST: PRESENT | VERCEL: FALSE
+Configuring Helper: Host=database-1.cj0yesowewgt.eu-north-1.rds.amazonaws.com, User=postgres, Region=eu-north-1, Role=SET
+Attached Vercel Database Pool Manager
+Connected to Postgres database at database-1.cj0yesowewgt.eu-north-1.rds.amazonaws.com
+[DEBUG-INIT] Starting server on port: 8083
+### SERVER HEARTBEAT: 2026-02-27-00-17 ###
+Initializing Database Schema...
+[DB] Executing: 
+                CREATE TABLE IF NOT EXISTS users (
+                    userId SERIAL PRIMARY KEY,
+ ...
+Server running on http://localhost:8083

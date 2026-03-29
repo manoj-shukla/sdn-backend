@@ -1,0 +1,95 @@
+
+> backend@1.0.0 dev
+> PORT=8083 nodemon index.js
+
+[33m[nodemon] 3.1.11[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node index.js`[39m
+[dotenv@17.2.4] injecting env (12) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+[dotenv@17.2.4] injecting env (0) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+### LOADED DATABASE JS ###
+Env Check - PGHOST: PRESENT | VERCEL: FALSE
+Configuring Helper: Host=database-1.cj0yesowewgt.eu-north-1.rds.amazonaws.com, User=postgres, Region=eu-north-1, Role=SET
+Attached Vercel Database Pool Manager
+Connected to Postgres database at database-1.cj0yesowewgt.eu-north-1.rds.amazonaws.com
+[DEBUG-INIT] Starting server on port: 8083
+### SERVER HEARTBEAT: 2026-02-27-00-17 ###
+Initializing Database Schema...
+[DB] Executing: 
+                CREATE TABLE IF NOT EXISTS users (
+                    userId SERIAL PRIMARY KEY,
+ ...
+Server running on http://localhost:8083
+[DB] Completed in 451ms. Rows: 0
+Schema Initialized Successfully (Batch Mode)
+[DB] Executing: 
+                    DO $$ 
+                    BEGIN 
+                        IF EXISTS (SELECT 1 F...
+[DB] Completed in 50ms. Rows: 0
+Migration (expires_at -> expiresat) completed or already done.
+[DB] Executing: 
+                        INSERT INTO users (username, password, email, role, subrole) 
+             ...
+[DB] Executing: SELECT supplierId, buyerId FROM suppliers LIMIT 1
+[DB] Executing: 
+                ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS gstin TEXT;
+                ALTER TA...
+[DB] Completed in 46ms. Rows: 1
+[DB Wrapper Debug] INSERT parsed. lastID set to 1, command: INSERT, idKeys found: userid,buyerid,supplierid,circleid
+Admin user seeded/updated successfully
+[DB] Completed in 355ms. Rows: 1
+[DB] Executing: SELECT COUNT(*) as count FROM orders
+[DB] Executing: SELECT COUNT(*) as count FROM invoices
+[DB] Completed in 393ms. Rows: 0
+Migrations applied successfully.
+[DB] Executing: 
+                CREATE TABLE IF NOT EXISTS supplier_change_requests (
+                    requestId...
+[DB] Completed in 43ms. Rows: 1
+[DB] Completed in 45ms. Rows: 1
+[DB] Completed in 43ms. Rows: 0
+[DB Wrapper Debug] INSERT skipped mapping. Command: undefined, Rows: 0
+Milestone 2 Schema applied successfully.
+[DB] Executing: 
+                ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS supplierCode TEXT UNIQUE;
+          ...
+[DB] Completed in 41ms. Rows: 0
+[DB] Executing: SELECT supplierId FROM suppliers WHERE supplierCode IS NULL
+[DB] Executing: 
+                ALTER TABLE invitations ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'SUPPLIER';
+    ...
+[DB] Completed in 45ms. Rows: 0
+[DB] Completed in 47ms. Rows: 0
+Invitation Role Migration applied successfully.
+[DB] Executing: 
+                ALTER TABLE messages ADD COLUMN IF NOT EXISTS recipientRole TEXT DEFAULT 'SUPPLIER'...
+[DB] Completed in 45ms. Rows: 0
+Message Role Migration applied successfully.
+[DB] Executing: 
+                ALTER TABLE supplier_change_items ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'PEN...
+[DB] Completed in 44ms. Rows: 0
+Change Item Columns Migration applied successfully.
+[DB] Executing: 
+                ALTER TABLE supplier_change_items ADD COLUMN IF NOT EXISTS reviewedByUserId INTEGER...
+[DB] Completed in 45ms. Rows: 0
+Change Item Approval Columns Migration applied successfully.
+[DB] Executing: 
+                CREATE TABLE IF NOT EXISTS user_supplier_memberships (
+                    membersh...
+[DB] Completed in 44ms. Rows: 0
+Multi-Buyer Table created successfully.
+[DB] Executing: 
+                            INSERT INTO user_supplier_memberships (userId, supplierId)
+            ...
+[DB] Executing: 
+                CREATE TABLE IF NOT EXISTS reports (
+                    reportId SERIAL PRIMARY KE...
+[DB] Completed in 45ms. Rows: 0
+Milestone 3 Schema applied successfully.
+Database initialized
+[DB] Completed in 47ms. Rows: 0
+[DB Wrapper Debug] INSERT skipped mapping. Command: INSERT, Rows: 0
+[32m[nodemon] clean exit - waiting for changes before restart[39m
