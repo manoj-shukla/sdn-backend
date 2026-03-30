@@ -421,10 +421,10 @@ class WorkflowService {
     // --- Execution ---
     static async initiateWorkflow(supplierId, workflowId, submissionType = 'INITIAL') {
         console.log(`[DEBUG-WORKFLOW] initiateWorkflow - supplierId: ${supplierId}, workflowId: ${workflowId}, type: ${submissionType}`);
-        // 0. Check for existing active workflow (Prevent Duplicates)
+        // 0. Check for existing active workflow (Prevent Duplicates) — includes REWORK_REQUIRED state
         const existingInstance = await new Promise((resolve, reject) => {
             db.get(
-                `SELECT instanceid FROM workflow_instances WHERE supplierid = ? AND status = 'PENDING'`,
+                `SELECT instanceid FROM workflow_instances WHERE supplierid = ? AND status IN ('PENDING', 'REWORK_REQUIRED')`,
                 [supplierId],
                 (err, row) => err ? reject(err) : resolve(row)
             );
@@ -432,14 +432,35 @@ class WorkflowService {
 
         if (existingInstance) {
             const instanceId = existingInstance.instanceid || existingInstance.instanceId;
-            console.log(`[Workflow] Resuming existing workflow ${instanceId} for supplier ${supplierId}. Updating type to ${submissionType}`);
+            console.log(`[Workflow] Resuming existing workflow ${instanceId} for supplier ${supplierId}. Resetting for ${submissionType}`);
 
-            // Update submissionType on resume
+            // Reset workflow instance back to active PENDING state
             await new Promise((resolve, reject) => {
-                db.run(`UPDATE workflow_instances SET submissiontype = ? WHERE instanceid = ?`, [submissionType, instanceId], (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
+                db.run(
+                    `UPDATE workflow_instances SET status = 'PENDING', submissiontype = ?, completedat = NULL WHERE instanceid = ?`,
+                    [submissionType, instanceId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+
+            // Reset all step instances: first step back to PENDING, rest back to WAITING
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE step_instances SET status = CASE WHEN steporder = 1 THEN 'PENDING' ELSE 'WAITING' END,
+                        actionbyuserid = NULL, actionat = NULL, comments = NULL
+                     WHERE instanceid = ?`,
+                    [instanceId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+
+            // Reset currentsteporder to 1 so approval restarts from first step
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE workflow_instances SET currentsteporder = 1 WHERE instanceid = ?`,
+                    [instanceId],
+                    (err) => err ? reject(err) : resolve()
+                );
             });
 
             return instanceId;

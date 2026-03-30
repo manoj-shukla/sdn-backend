@@ -711,6 +711,7 @@ class SupplierService {
 
             const oldStatus = (current?.approvalstatus || current?.approvalStatus || 'DRAFT').toUpperCase();
             const submissionType = (oldStatus === 'DRAFT' || oldStatus === 'REJECTED') ? 'INITIAL' : 'RESUBMISSION';
+            // REWORK_REQUIRED is treated as RESUBMISSION (existing workflow instance will be resumed + reset)
 
             console.log(`[submitForReview] Current status: ${oldStatus}, Determined submissionType: ${submissionType}`);
 
