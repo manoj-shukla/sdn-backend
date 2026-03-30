@@ -1068,6 +1068,15 @@ class PostgresWrapper {
                 });
             });
 
+            // Migration: Add guest_name to rfi_invitation
+            await new Promise((resolve) => {
+                this.run(`ALTER TABLE rfi_invitation ADD COLUMN IF NOT EXISTS guest_name TEXT;`, [], (err) => {
+                    if (err) console.warn("RFI Invitation guest_name migration error (likely already exists):", err.message);
+                    else console.log("RFI Invitation guest_name column added.");
+                    resolve();
+                });
+            });
+
             // Migration: Change notifications.entityId from INTEGER to TEXT (to support UUID entity references)
             const notificationsMigrationSql = `
                 ALTER TABLE notifications ALTER COLUMN entityid TYPE TEXT USING entityid::TEXT;

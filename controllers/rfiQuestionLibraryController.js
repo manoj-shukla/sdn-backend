@@ -29,20 +29,27 @@ class RFIQuestionLibraryController {
 
     static async updateQuestion(req, res) {
         try {
-            const result = await RFIQuestionLibraryService.updateQuestion(req.params.id, req.body);
+            const result = await RFIQuestionLibraryService.updateQuestion(req.params.id, req.body, req.user);
             res.json(result);
         } catch (err) {
-            const status = err.message.includes('not found') ? 404 : 500;
+            let status = 500;
+            if (err.message.includes('not found')) status = 404;
+            else if (err.message.includes('Forbidden')) status = 403;
+            else if (err.message.includes('required')) status = 400;
+
             res.status(status).json({ error: err.message });
         }
     }
 
     static async deleteQuestion(req, res) {
         try {
-            const result = await RFIQuestionLibraryService.deleteQuestion(req.params.id);
+            const result = await RFIQuestionLibraryService.deleteQuestion(req.params.id, req.user);
             res.json(result);
         } catch (err) {
-            const status = err.message.includes('not found') ? 404 : 500;
+            let status = 500;
+            if (err.message.includes('not found')) status = 404;
+            else if (err.message.includes('Forbidden')) status = 403;
+
             res.status(status).json({ error: err.message });
         }
     }

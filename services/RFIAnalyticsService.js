@@ -136,17 +136,29 @@ class RFIAnalyticsService {
                                             let totalRate = 0;
                                             let counted = 0;
                                             for (const pe of (perEvent || [])) {
-                                                if (pe.invited > 0) {
-                                                    totalRate += (pe.submitted / pe.invited) * 100;
+                                                const inv = Number(pe.invited || 0);
+                                                const sub = Number(pe.submitted || 0);
+                                                if (inv > 0) {
+                                                    totalRate += (sub / inv) * 100;
                                                     counted++;
                                                 }
                                             }
                                             const avgCompletionRate = counted > 0 ? Math.round(totalRate / counted) : 0;
 
+                                            // Sum invited and submitted across all events
+                                            const totalInvited = (perEvent || []).reduce((sum, pe) => sum + Number(pe.invited || 0), 0);
+                                            const totalSubmitted = (perEvent || []).reduce((sum, pe) => sum + Number(pe.submitted || 0), 0);
+                                            const totalAwaiting = Math.max(0, totalInvited - totalSubmitted);
+                                            const convertedEvents = events.filter(e => e.status === 'CONVERTED').length;
+
                                             resolve({
                                                 buyerId,
                                                 totalRFIs: events.length,
                                                 totalSuppliersParticipated: totalSuppliers,
+                                                totalInvited,
+                                                totalSubmitted,
+                                                totalAwaiting,
+                                                convertedEvents,
                                                 avgCompletionRate,
                                                 certificationCoverage: certCoverage,
                                                 events: events.map(e => ({

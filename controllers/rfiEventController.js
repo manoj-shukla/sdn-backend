@@ -20,6 +20,13 @@ class RFIEventController {
         } catch (err) { res.status(500).json({ error: err.message }); }
     }
 
+    static async getActiveCount(req, res) {
+        try {
+            const result = await RFIEventService.listEvents(req.user, { status: 'OPEN' });
+            res.json({ count: Array.isArray(result) ? result.length : 0 });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
     static async getEventById(req, res) {
         try {
             const result = await RFIEventService.getEventById(req.params.id);
@@ -71,10 +78,21 @@ class RFIEventController {
     static async addInvitations(req, res) {
         try {
             const supplierIds = req.body.supplierIds || [];
-            if (!Array.isArray(supplierIds) || supplierIds.length === 0) {
-                return res.status(400).json({ error: 'supplierIds array is required' });
+            const emailInvites = req.body.emailInvites || req.body.emails || [];
+            
+            let normalizedEmailInvites = [];
+            if (Array.isArray(emailInvites)) {
+                normalizedEmailInvites = emailInvites.map(inv => {
+                    if (typeof inv === 'string') return { email: inv, legalName: inv };
+                    return inv;
+                });
             }
-            const result = await RFIEventService.addInvitations(req.params.id, supplierIds, req.user);
+
+            if (supplierIds.length === 0 && normalizedEmailInvites.length === 0) {
+                return res.json({ success: true, message: 'No invitations to process', count: 0, invitations: [], errors: [] });
+            }
+
+            const result = await RFIEventService.addInvitations(req.params.id, supplierIds, normalizedEmailInvites, req.user);
             res.json(result);
         } catch (err) {
             const status = err.message.includes('not found') ? 404 : 500;

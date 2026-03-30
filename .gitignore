@@ -34,3 +34,5 @@ tmp/
 temp/
 
 node_modules/
+
+uploads/

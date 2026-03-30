@@ -1,6 +1,7 @@
 const db = require('../config/database');
 const { randomUUID } = require('crypto');
 const NotificationService = require('./NotificationService');
+const InvitationService = require('./InvitationService');
 
 const VALID_EVENT_TRANSITIONS = {
     DRAFT: ['OPEN'],
@@ -47,19 +48,31 @@ class RFIEventService {
 
     static async listEvents(user, filters) {
         return new Promise((resolve, reject) => {
-            let query = `SELECT * FROM rfi_event WHERE 1=1`;
+            let query = `
+                SELECT e.*,
+                    COALESCE(inv.supplier_count, 0) AS supplier_count,
+                    COALESCE(inv.submitted_count, 0) AS submitted_count
+                FROM rfi_event e
+                LEFT JOIN (
+                    SELECT rfi_id,
+                           COUNT(*) AS supplier_count,
+                           COUNT(*) FILTER (WHERE invitation_status = 'SUBMITTED') AS submitted_count
+                    FROM rfi_invitation
+                    GROUP BY rfi_id
+                ) inv ON inv.rfi_id = e.rfi_id
+                WHERE 1=1`;
             const params = [];
 
             if (user.buyerId) {
-                query += ` AND buyer_id = ?`;
+                query += ` AND e.buyer_id = ?`;
                 params.push(user.buyerId);
             }
             if (filters && filters.status) {
-                query += ` AND status = ?`;
+                query += ` AND e.status = ?`;
                 params.push(filters.status);
             }
 
-            query += ` ORDER BY created_at DESC`;
+            query += ` ORDER BY e.created_at DESC`;
 
             db.all(query, params, (err, rows) => {
                 if (err) return reject(err);
@@ -255,62 +268,59 @@ class RFIEventService {
 
     // ---- Invitations ----
 
-    static async addInvitations(rfiId, supplierIds, user) {
+    static async addInvitations(rfiId, supplierIds, emailInvites, user) {
         const event = await RFIEventService.getEventById(rfiId);
         if (!event) throw new Error('RFI event not found');
 
         const results = [];
         const errors = [];
 
-        for (const supplierId of supplierIds) {
-            try {
-                // Check for duplicate
-                const existing = await new Promise((res, rej) => {
-                    db.get(`SELECT * FROM rfi_invitation WHERE rfi_id = ? AND supplier_id = ?`, [rfiId, supplierId], (err, row) => {
-                        if (err) rej(err); else res(row);
+        // 1. Process Directory Supplier IDs
+        if (Array.isArray(supplierIds)) {
+            for (const supplierId of supplierIds) {
+                try {
+                    // Check for duplicate
+                    const existing = await new Promise((res, rej) => {
+                        db.get(`SELECT * FROM rfi_invitation WHERE rfi_id = ? AND supplier_id = ?`, [rfiId, supplierId], (err, row) => {
+                            if (err) rej(err); else res(row);
+                        });
                     });
-                });
 
-                if (existing) {
-                    errors.push({ supplierId, error: 'Supplier already invited to this RFI' });
-                    continue;
-                }
+                    if (existing) {
+                        errors.push({ supplierId, error: 'Supplier already invited to this RFI' });
+                        continue;
+                    }
 
-                // Check if supplier is blocked/inactive
-                const supplier = await new Promise((res, rej) => {
-                    db.get(`SELECT * FROM suppliers WHERE supplierId = ?`, [supplierId], (err, row) => {
-                        if (err) rej(err); else res(row);
+                    // Check if supplier exists and is active
+                    const supplier = await new Promise((res, rej) => {
+                        db.get(`SELECT * FROM suppliers WHERE supplierId = ?`, [supplierId], (err, row) => {
+                            if (err) rej(err); else res(row);
+                        });
                     });
-                });
 
-                if (!supplier) {
-                    errors.push({ supplierId, error: 'Supplier not found' });
-                    continue;
-                }
+                    if (!supplier) {
+                        errors.push({ supplierId, error: 'Supplier not found' });
+                        continue;
+                    }
 
-                if (supplier.isactive === false || supplier.isActive === false) {
-                    errors.push({ supplierId, error: 'Supplier is blocked/inactive and cannot be invited' });
-                    continue;
-                }
+                    if (supplier.isactive === false || supplier.isActive === false) {
+                        errors.push({ supplierId, error: 'Supplier is blocked/inactive and cannot be invited' });
+                        continue;
+                    }
 
-                const invitationId = randomUUID();
-                const token = randomUUID();
+                    const invitationId = randomUUID();
+                    const token = randomUUID();
+                    const initialStatus = event.status === 'OPEN' ? 'SENT' : 'CREATED';
 
-                // If event is already OPEN, immediately mark as SENT and notify
-                const initialStatus = event.status === 'OPEN' ? 'SENT' : 'CREATED';
-                const sentTimestamp = event.status === 'OPEN' ? 'CURRENT_TIMESTAMP' : 'NULL';
+                    await new Promise((res, rej) => {
+                        db.run(
+                            `INSERT INTO rfi_invitation (invitation_id, rfi_id, supplier_id, invitation_status, sent_timestamp, token) VALUES (?, ?, ?, ?, ${event.status === 'OPEN' ? 'CURRENT_TIMESTAMP' : 'NULL'}, ?)`,
+                            [invitationId, rfiId, supplierId, initialStatus, token],
+                            function(err) { if (err) rej(err); else res(); }
+                        );
+                    });
 
-                await new Promise((res, rej) => {
-                    db.run(
-                        `INSERT INTO rfi_invitation (invitation_id, rfi_id, supplier_id, invitation_status, sent_timestamp, token) VALUES (?, ?, ?, ?, ${sentTimestamp === 'NULL' ? 'NULL' : 'CURRENT_TIMESTAMP'}, ?)`,
-                        [invitationId, rfiId, supplierId, initialStatus, token],
-                        function(err) { if (err) rej(err); else res(); }
-                    );
-                });
-
-                // If event is OPEN, immediately send notification
-                if (event.status === 'OPEN') {
-                    try {
+                    if (event.status === 'OPEN') {
                         await NotificationService.createNotification({
                             type: 'RFI_INVITATION',
                             message: `You have been invited to respond to RFI: ${event.title}. Please log in to submit your response.`,
@@ -318,14 +328,72 @@ class RFIEventService {
                             recipientRole: 'SUPPLIER',
                             supplierId,
                         });
-                    } catch (notifErr) {
-                        console.error(`[RFIEventService] Failed to notify supplier ${supplierId}:`, notifErr.message);
                     }
-                }
 
-                results.push({ invitationId, supplierId, status: initialStatus });
-            } catch (e) {
-                errors.push({ supplierId, error: e.message });
+                    results.push({ invitationId, supplierId, status: initialStatus });
+                } catch (e) {
+                    errors.push({ supplierId, error: e.message });
+                }
+            }
+        }
+
+        // 2. Process Email (Guest) Invites
+        if (Array.isArray(emailInvites)) {
+            for (const invite of emailInvites) {
+                try {
+                    const { email, legalName } = invite;
+                    if (!email || !legalName) continue;
+
+                    // Check for duplicate by email
+                    const existing = await new Promise((res, rej) => {
+                        db.get(`SELECT * FROM rfi_invitation WHERE rfi_id = ? AND guest_email = ?`, [rfiId, email], (err, row) => {
+                            if (err) rej(err); else res(row);
+                        });
+                    });
+
+                    if (existing) {
+                        errors.push({ email, error: 'Email already invited to this RFI' });
+                        continue;
+                    }
+
+                    const invitationId = randomUUID();
+                    const token = randomUUID();
+                    const initialStatus = event.status === 'OPEN' ? 'SENT' : 'CREATED';
+
+                    await new Promise((res, rej) => {
+                        db.run(
+                            `INSERT INTO rfi_invitation (invitation_id, rfi_id, guest_email, guest_name, invitation_status, sent_timestamp, token) 
+                             VALUES (?, ?, ?, ?, ?, ${event.status === 'OPEN' ? 'CURRENT_TIMESTAMP' : 'NULL'}, ?)`,
+                            [invitationId, rfiId, email, legalName, initialStatus, token],
+                            function(err) { if (err) rej(err); else res(); }
+                        );
+                    });
+
+                    // 2a. Sync with main Invitation Directory for onboarding
+                    try {
+                        await InvitationService.createInvitation({
+                            email,
+                            legalName,
+                            role: 'SUPPLIER',
+                            buyerId: user.buyerId || user.buyerid
+                        }, user);
+                        console.log(`[RFI Service] Linked RFI guest ${email} to main invitation directory.`);
+                    } catch (syncErr) {
+                        // If "Supplier already exists", it usually means they are already in the onboarding list or users table.
+                        // We swallow this as it's not a fatal error for RFI.
+                        console.log(`[RFI Service] Guest ${email} already in main directory/users table. Skipping main invite creation.`);
+                    }
+
+                    if (event.status === 'OPEN') {
+                        // For guest, we can't create an internal notification yet since they don't have a supplierId
+                        // But we simulation an email send
+                        console.log(`[EMAIL SIMULATION] RFI Guest invitation email sent to ${email} for RFI "${event.title}"`);
+                    }
+
+                    results.push({ invitationId, email, status: initialStatus });
+                } catch (e) {
+                    errors.push({ email: invite.email, error: e.message });
+                }
             }
         }
 
@@ -334,7 +402,7 @@ class RFIEventService {
 
     static async listInvitations(rfiId) {
         return new Promise((resolve, reject) => {
-            db.all(`SELECT i.*, s.legalname as supplier_name
+            db.all(`SELECT i.*, COALESCE(s.legalname, i.guest_name) as supplier_name
                     FROM rfi_invitation i
                     LEFT JOIN suppliers s ON i.supplier_id = s.supplierid
                     WHERE i.rfi_id = ?
@@ -443,7 +511,9 @@ class RFIEventService {
             status: row.status,
             createdBy: row.created_by,
             createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
+            supplierCount: Number(row.supplier_count ?? 0),
+            submittedCount: Number(row.submitted_count ?? 0),
         };
     }
 
@@ -454,7 +524,7 @@ class RFIEventService {
             rfiId: row.rfi_id,
             supplierId: row.supplier_id,
             supplierName: row.supplier_name,
-            supplierEmail: row.guest_email,
+            supplierEmail: row.guest_email || row.supplierEmail || null,
             status: row.invitation_status,
             sentAt: row.sent_timestamp,
             viewedAt: row.viewed_at || null,

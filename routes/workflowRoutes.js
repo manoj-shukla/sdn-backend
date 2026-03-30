@@ -102,6 +102,12 @@ router.patch('/workflows/:id/status', authenticateToken, async (req, res) => {
 });
 
 router.get('/approvals/pending', authenticateToken, WorkflowController.getPendingTasks);
+router.get('/approvals/count', authenticateToken, async (req, res) => {
+    try {
+        const tasks = await WorkflowService.getPendingTasks(req.user);
+        res.json({ count: tasks.length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 router.post('/approvals/:instanceId/approve', authenticateToken, WorkflowController.approve);
 router.post('/approvals/:instanceId/reject', authenticateToken, WorkflowController.reject);
 router.post('/approvals/:instanceId/rework', authenticateToken, WorkflowController.rework);

@@ -45,6 +45,7 @@ router.delete('/questions/:id', authenticateToken, requireAdmin, RFIQuestionLibr
 
 router.post('/events', authenticateToken, requireAdmin, RFIEventController.createEvent);
 router.get('/events', authenticateToken, requireRole('BUYER'), RFIEventController.listEvents);
+router.get('/events/active-count', authenticateToken, requireRole('BUYER'), RFIEventController.getActiveCount);
 router.get('/events/:id', authenticateToken, RFIEventController.getEventById);
 router.put('/events/:id', authenticateToken, requireAdmin, RFIEventController.updateEvent);
 router.post('/events/:id/publish', authenticateToken, requireAdmin, RFIEventController.publishEvent);

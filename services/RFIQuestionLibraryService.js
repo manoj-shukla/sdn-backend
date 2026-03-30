@@ -57,28 +57,33 @@ class RFIQuestionLibraryService {
 
     static async listQuestions(filters) {
         return new Promise((resolve, reject) => {
-            let query = `SELECT * FROM rfi_question_library WHERE is_deleted = FALSE`;
+            let query = `
+                SELECT q.*, u.role as creator_role, u.username as creator_username
+                FROM rfi_question_library q
+                LEFT JOIN users u ON q.created_by = u.userId
+                WHERE q.is_deleted = FALSE
+            `;
             const params = [];
 
             if (filters && filters.category) {
-                query += ` AND (category ILIKE ? OR category_tags::text ILIKE ?)`;
+                query += ` AND (q.category ILIKE ? OR q.category_tags::text ILIKE ?)`;
                 params.push(`%${filters.category}%`);
                 params.push(`%${filters.category}%`);
             }
             if (filters && filters.capability) {
-                query += ` AND capability_tags::text ILIKE ?`;
+                query += ` AND q.capability_tags::text ILIKE ?`;
                 params.push(`%${filters.capability}%`);
             }
             if (filters && filters.compliance) {
-                query += ` AND compliance_tags::text ILIKE ?`;
+                query += ` AND q.compliance_tags::text ILIKE ?`;
                 params.push(`%${filters.compliance}%`);
             }
             if (filters && filters.questionType) {
-                query += ` AND question_type = ?`;
+                query += ` AND q.question_type = ?`;
                 params.push(filters.questionType);
             }
 
-            query += ` ORDER BY created_at DESC`;
+            query += ` ORDER BY q.created_at DESC`;
 
             db.all(query, params, (err, rows) => {
                 if (err) return reject(err);
@@ -89,16 +94,29 @@ class RFIQuestionLibraryService {
 
     static async getQuestionById(questionId) {
         return new Promise((resolve, reject) => {
-            db.get(`SELECT * FROM rfi_question_library WHERE question_id = ? AND is_deleted = FALSE`, [questionId], (err, row) => {
+            const query = `
+                SELECT q.*, u.role as creator_role, u.username as creator_username
+                FROM rfi_question_library q
+                LEFT JOIN users u ON q.created_by = u.userId
+                WHERE q.question_id = ? AND q.is_deleted = FALSE
+            `;
+            db.get(query, [questionId], (err, row) => {
                 if (err) return reject(err);
                 resolve(RFIQuestionLibraryService._normalize(row));
             });
         });
     }
 
-    static async updateQuestion(questionId, data) {
+    static async updateQuestion(questionId, data, user) {
         const current = await RFIQuestionLibraryService.getQuestionById(questionId);
         if (!current) throw new Error('Question not found');
+
+        // RBAC: If question was created by ADMIN, only another ADMIN can edit it.
+        const isCreatedByAdmin = (current.creatorRole || current.creator_role) === 'ADMIN';
+        const isCurrentUserBuyer = (user.role || '').toUpperCase() === 'BUYER';
+        if (isCreatedByAdmin && isCurrentUserBuyer) {
+            throw new Error('Forbidden: Questions created by Super Admin cannot be edited by Buyers.');
+        }
 
         // Accept camelCase, snake_case, and short field names from frontend
         const questionText = data.questionText || data.question_text || data.text || data.name || data.title || data.content;
@@ -142,9 +160,16 @@ class RFIQuestionLibraryService {
         });
     }
 
-    static async deleteQuestion(questionId) {
+    static async deleteQuestion(questionId, user) {
         const current = await RFIQuestionLibraryService.getQuestionById(questionId);
         if (!current) throw new Error('Question not found');
+
+        // RBAC: If question was created by ADMIN, only another ADMIN can delete it.
+        const isCreatedByAdmin = (current.creatorRole || current.creator_role) === 'ADMIN';
+        const isCurrentUserBuyer = (user.role || '').toUpperCase() === 'BUYER';
+        if (isCreatedByAdmin && isCurrentUserBuyer) {
+            throw new Error('Forbidden: Questions created by Super Admin cannot be deleted by Buyers.');
+        }
 
         return new Promise((resolve, reject) => {
             db.run(
@@ -178,6 +203,8 @@ class RFIQuestionLibraryService {
             createdBy: row.created_by,
             isDeleted: row.is_deleted,
             createdAt: row.created_at,
+            creatorRole: row.creator_role,
+            creatorUsername: row.creator_username,
             // snake_case aliases (for frontend compatibility)
             question_id: row.question_id,
             question_text: row.question_text,
@@ -189,7 +216,9 @@ class RFIQuestionLibraryService {
             compliance_tags: row.compliance_tags,
             created_by: row.created_by,
             is_deleted: row.is_deleted,
-            created_at: row.created_at
+            created_at: row.created_at,
+            creator_role: row.creator_role,
+            creator_username: row.creator_username
         };
     }
 }
