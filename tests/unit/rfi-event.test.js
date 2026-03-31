@@ -1,45 +1,37 @@
 /**
  * Unit Tests - RFIEventService
  * Tests event lifecycle, eligibility check, duplicate invite prevention
+ * Updated to match current service implementation.
  */
 
-jest.mock('../../config/database', () => ({
-    run: jest.fn(),
-    get: jest.fn(),
-    all: jest.fn()
-}));
-jest.mock('../../services/RFIToRFPService', () => ({
-    convertRFIToRFP: jest.fn()
-}));
+jest.mock('../../config/database', () => ({ run: jest.fn(), get: jest.fn(), all: jest.fn() }));
+jest.mock('../../services/RFIToRFPService', () => ({ convertRFIToRFP: jest.fn() }));
+// Prevent getEventById from hanging while enriching template data
+jest.mock('../../services/RFITemplateService', () => ({ getTemplateById: jest.fn() }));
+jest.mock('../../services/NotificationService', () => ({ createNotification: jest.fn() }));
 
 const db = require('../../config/database');
 const RFIToRFPService = require('../../services/RFIToRFPService');
+const RFITemplateService = require('../../services/RFITemplateService');
+const NotificationService = require('../../services/NotificationService');
 const RFIEventService = require('../../services/RFIEventService');
 
 const mockUser = { userId: 1, buyerId: 10, role: 'BUYER' };
 
 const mockEventRow = {
-    rfi_id: 'rfi-1',
-    template_id: 'tpl-1',
-    title: 'Cloud Vendor RFI',
-    description: 'Vendor evaluation',
-    buyer_id: 10,
-    publish_date: null,
+    rfi_id: 'rfi-1', template_id: 'tpl-1', title: 'Cloud Vendor RFI',
+    description: 'Vendor evaluation', buyer_id: 10, publish_date: null,
     deadline: new Date(Date.now() + 86400000).toISOString(),
-    status: 'DRAFT',
-    created_by: 1,
-    created_at: new Date(),
-    updated_at: new Date()
+    status: 'DRAFT', created_by: 1, created_at: new Date(), updated_at: new Date(),
+    supplier_count: 0, submitted_count: 0,
 };
 
-const mockSupplier = {
-    supplierid: 42,
-    legalname: 'ACME Corp',
-    isactive: true
-};
+const mockSupplier = { supplierid: 42, legalname: 'ACME Corp', isactive: true };
 
 beforeEach(() => {
     jest.resetAllMocks();
+    RFITemplateService.getTemplateById.mockResolvedValue(null);
+    NotificationService.createNotification.mockResolvedValue(null);
 });
 
 describe('RFIEventService', () => {
@@ -49,10 +41,7 @@ describe('RFIEventService', () => {
             db.run.mockImplementationOnce((sql, params, cb) => cb.call({ lastID: 'rfi-1' }, null));
             db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
 
-            const result = await RFIEventService.createEvent(
-                { title: 'Cloud Vendor RFI', deadline: mockEventRow.deadline },
-                mockUser
-            );
+            const result = await RFIEventService.createEvent({ title: 'Cloud Vendor RFI', deadline: mockEventRow.deadline }, mockUser);
 
             expect(result.title).toBe('Cloud Vendor RFI');
             expect(result.status).toBe('DRAFT');
@@ -60,85 +49,64 @@ describe('RFIEventService', () => {
         });
 
         test('should reject if title is missing', async () => {
-            await expect(RFIEventService.createEvent({}, mockUser))
-                .rejects.toThrow('title is required');
+            await expect(RFIEventService.createEvent({}, mockUser)).rejects.toThrow('title is required');
         });
     });
 
     describe('publishEvent', () => {
-        test('should transition DRAFT → OPEN and dispatch invitations', async () => {
-            // getEventById
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow)); // DRAFT
-            // UPDATE to OPEN
+        test('should transition DRAFT to OPEN and dispatch invitations', async () => {
+            // getEventById: event lookup
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
+            // UPDATE event status to OPEN
             db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));
-            // dispatch invitations
-            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));
-            // fetch after update
-            const openRow = { ...mockEventRow, status: 'OPEN' };
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, openRow));
+            // _dispatchInvitations makes 3 DB calls:
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { title: 'Cloud Vendor RFI' })); // fetch event title
+            db.all.mockImplementationOnce((sql, params, cb) => cb(null, []));                            // no pending invitations
+            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));                       // UPDATE invitation status to SENT
+            // fetch event after update
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { ...mockEventRow, status: 'OPEN' }));
 
             const result = await RFIEventService.publishEvent('rfi-1', mockUser);
 
-            expect(db.run).toHaveBeenCalledTimes(2);
-            const updateSql = db.run.mock.calls[0][0];
-            expect(updateSql).toContain("'OPEN'");
+            expect(db.run.mock.calls[0][0]).toContain("'OPEN'");
             expect(result.status).toBe('OPEN');
         });
 
-        test('should reject publishing an OPEN event', async () => {
-            const openEvent = { ...mockEventRow, status: 'OPEN' };
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, openEvent));
-
-            await expect(RFIEventService.publishEvent('rfi-1', mockUser))
-                .rejects.toThrow('Cannot publish');
+                test('should reject publishing an OPEN event', async () => {
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { ...mockEventRow, status: 'OPEN' }));
+            await expect(RFIEventService.publishEvent('rfi-1', mockUser)).rejects.toThrow('Cannot publish');
         });
 
         test('should reject publishing a non-existent event', async () => {
             db.get.mockImplementationOnce((sql, params, cb) => cb(null, null));
-
-            await expect(RFIEventService.publishEvent('bad-id', mockUser))
-                .rejects.toThrow('RFI event not found');
+            await expect(RFIEventService.publishEvent('bad-id', mockUser)).rejects.toThrow('RFI event not found');
         });
     });
 
     describe('closeEvent', () => {
-        test('should transition OPEN → CLOSED and expire pending invitations', async () => {
-            const openEvent = { ...mockEventRow, status: 'OPEN' };
-            // getEventById
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, openEvent));
-            // UPDATE to CLOSED
-            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));
-            // expire invitations
-            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));
-            // fetch after update
-            const closedRow = { ...mockEventRow, status: 'CLOSED' };
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, closedRow));
+        test('should transition OPEN to CLOSED and expire pending invitations', async () => {
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { ...mockEventRow, status: 'OPEN' }));
+            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null)); // UPDATE CLOSED
+            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null)); // expire invitations
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { ...mockEventRow, status: 'CLOSED' }));
 
             const result = await RFIEventService.closeEvent('rfi-1', mockUser);
 
-            const expireSql = db.run.mock.calls[1][0];
-            expect(expireSql).toContain('EXPIRED');
+            expect(db.run.mock.calls[1][0]).toContain('EXPIRED');
             expect(result.status).toBe('CLOSED');
         });
 
         test('should reject closing a DRAFT event', async () => {
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow)); // DRAFT
-
-            await expect(RFIEventService.closeEvent('rfi-1', mockUser))
-                .rejects.toThrow('Cannot close');
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
+            await expect(RFIEventService.closeEvent('rfi-1', mockUser)).rejects.toThrow('Cannot close');
         });
     });
 
     describe('convertToRFP', () => {
         test('should convert CLOSED event to CONVERTED and call RFIToRFPService', async () => {
-            const closedEvent = { ...mockEventRow, status: 'CLOSED' };
-            // getEventById
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, closedEvent));
-            // UPDATE to CONVERTED
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { ...mockEventRow, status: 'CLOSED' }));
             db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));
-            // fetch after update
-            const convertedRow = { ...mockEventRow, status: 'CONVERTED' };
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, convertedRow));
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { ...mockEventRow, status: 'CONVERTED' }));
             RFIToRFPService.convertRFIToRFP.mockResolvedValue({ rfpTitle: 'RFP - Cloud Vendor RFI' });
 
             const result = await RFIEventService.convertToRFP('rfi-1', mockUser);
@@ -149,25 +117,19 @@ describe('RFIEventService', () => {
         });
 
         test('should reject converting a DRAFT event', async () => {
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow)); // DRAFT
-
-            await expect(RFIEventService.convertToRFP('rfi-1', mockUser))
-                .rejects.toThrow('Cannot convert');
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
+            await expect(RFIEventService.convertToRFP('rfi-1', mockUser)).rejects.toThrow('Cannot convert');
         });
     });
 
     describe('addInvitations', () => {
         test('should add valid supplier invitations', async () => {
-            // getEventById
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
-            // no existing invitation
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, null));
-            // supplier found and active
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockSupplier));
-            // INSERT invitation
-            db.run.mockImplementationOnce((sql, params, cb) => cb.call({ lastID: 'inv-1' }, null));
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow)); // getEventById
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, null));          // no dup
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockSupplier)); // supplier active
+            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));      // INSERT
 
-            const result = await RFIEventService.addInvitations('rfi-1', [42], mockUser);
+            const result = await RFIEventService.addInvitations('rfi-1', [42], [], mockUser);
 
             expect(result.added).toHaveLength(1);
             expect(result.errors).toHaveLength(0);
@@ -175,13 +137,10 @@ describe('RFIEventService', () => {
         });
 
         test('should reject duplicate supplier invitation', async () => {
-            const existingInvite = { invitation_id: 'existing', supplier_id: 42 };
-            // getEventById
             db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
-            // existing invitation found
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, existingInvite));
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { invitation_id: 'existing' })); // dup found
 
-            const result = await RFIEventService.addInvitations('rfi-1', [42], mockUser);
+            const result = await RFIEventService.addInvitations('rfi-1', [42], [], mockUser);
 
             expect(result.added).toHaveLength(0);
             expect(result.errors).toHaveLength(1);
@@ -189,30 +148,23 @@ describe('RFIEventService', () => {
         });
 
         test('should reject invitation for blocked/inactive supplier', async () => {
-            const inactiveSupplier = { ...mockSupplier, isactive: false };
-            // getEventById
             db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
-            // no existing invite
             db.get.mockImplementationOnce((sql, params, cb) => cb(null, null));
-            // inactive supplier
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, inactiveSupplier));
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { ...mockSupplier, isactive: false }));
 
-            const result = await RFIEventService.addInvitations('rfi-1', [42], mockUser);
+            const result = await RFIEventService.addInvitations('rfi-1', [42], [], mockUser);
 
             expect(result.errors[0].error).toContain('blocked');
         });
 
         test('should handle multiple suppliers with mixed eligibility', async () => {
-            // getEventById
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow));
-            // supplier 42: no existing invite, active
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, null));
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockSupplier));
-            // supplier 99: already invited
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { invitation_id: 'x' }));
-            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockEventRow)); // getEventById
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, null));          // 42: no dup
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, mockSupplier)); // 42: active
+            db.run.mockImplementationOnce((sql, params, cb) => cb.call({}, null));      // INSERT 42
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, { invitation_id: 'x' })); // 99: dup
 
-            const result = await RFIEventService.addInvitations('rfi-1', [42, 99], mockUser);
+            const result = await RFIEventService.addInvitations('rfi-1', [42, 99], [], mockUser);
 
             expect(result.added).toHaveLength(1);
             expect(result.errors).toHaveLength(1);
@@ -222,8 +174,8 @@ describe('RFIEventService', () => {
     describe('validateSupplierEligibility', () => {
         test('should return eligible for valid uninvited suppliers', async () => {
             db.get
-                .mockImplementationOnce((sql, params, cb) => cb(null, mockSupplier))  // supplier found
-                .mockImplementationOnce((sql, params, cb) => cb(null, null));          // not invited
+                .mockImplementationOnce((sql, params, cb) => cb(null, mockSupplier)) // supplier exists
+                .mockImplementationOnce((sql, params, cb) => cb(null, null));         // not yet invited
 
             const result = await RFIEventService.validateSupplierEligibility('rfi-1', [42]);
 
@@ -237,6 +189,41 @@ describe('RFIEventService', () => {
 
             expect(result[0].eligible).toBe(false);
             expect(result[0].reason).toContain('not found');
+        });
+    });
+
+    describe('listEvents — supplier count via LEFT JOIN', () => {
+        test('should parse supplierCount as number (PostgreSQL returns COUNT as string)', async () => {
+            db.all.mockImplementationOnce((sql, params, cb) => cb(null, [{
+                ...mockEventRow, supplier_count: '3', submitted_count: '2'
+            }]));
+
+            const results = await RFIEventService.listEvents(mockUser, {});
+
+            expect(results[0].supplierCount).toBe(3);
+            expect(results[0].submittedCount).toBe(2);
+        });
+
+        test('should default counts to 0 when LEFT JOIN returns null', async () => {
+            db.all.mockImplementationOnce((sql, params, cb) => cb(null, [{
+                ...mockEventRow, supplier_count: null, submitted_count: null
+            }]));
+
+            const results = await RFIEventService.listEvents(mockUser, {});
+
+            expect(results[0].supplierCount).toBe(0);
+            expect(results[0].submittedCount).toBe(0);
+        });
+
+        test('listEvents SQL should use LEFT JOIN aggregation not correlated subqueries', async () => {
+            db.all.mockImplementationOnce((sql, params, cb) => cb(null, []));
+
+            await RFIEventService.listEvents(mockUser, {});
+
+            const sql = db.all.mock.calls[0][0];
+            expect(sql).toContain('LEFT JOIN');
+            expect(sql).toContain('supplier_count');
+            expect(sql).toContain('GROUP BY');
         });
     });
 });

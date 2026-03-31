@@ -194,15 +194,15 @@ describe('RFITemplateService', () => {
             // UPDATE run
             db.run.mockImplementationOnce((sql, params, cb) => cb(null));
             // fetch after update
-            const activeRow = { ...mockTemplateRow, status: 'ACTIVE' };
-            db.get.mockImplementationOnce((sql, params, cb) => cb(null, activeRow));
+            const publishedRow = { ...mockTemplateRow, status: 'PUBLISHED' };
+            db.get.mockImplementationOnce((sql, params, cb) => cb(null, publishedRow));
 
             const result = await RFITemplateService.publishTemplate('uuid-1', mockUser);
 
             expect(RFIRuleEngineService.detectCircularLogic).toHaveBeenCalledWith('uuid-1');
             expect(db.run).toHaveBeenCalledTimes(1);
             const sql = db.run.mock.calls[0][0];
-            expect(sql).toContain("'ACTIVE'");
+            expect(sql).toContain("'PUBLISHED'");
         });
 
         test('should reject publishing if circular logic detected', async () => {
@@ -223,9 +223,9 @@ describe('RFITemplateService', () => {
     });
 
     describe('archiveTemplate', () => {
-        test('should archive an ACTIVE template', async () => {
-            const activeRow = { ...mockTemplateRow, status: 'ACTIVE' };
-            // getTemplateById returns ACTIVE
+        test('should archive a PUBLISHED template', async () => {
+            const activeRow = { ...mockTemplateRow, status: 'PUBLISHED' };
+            // getTemplateById returns PUBLISHED (the only valid pre-archive state)
             mockGetTemplate(activeRow);
             // UPDATE run
             db.run.mockImplementationOnce((sql, params, cb) => cb(null));
