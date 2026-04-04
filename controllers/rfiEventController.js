@@ -12,6 +12,23 @@ class RFIEventController {
         }
     }
 
+    static async importEvents(req, res) {
+        try {
+            const items = req.body;
+            if (!Array.isArray(items) || items.length === 0) {
+                return res.status(400).json({ error: 'Request body must be a non-empty JSON array of RFI events.' });
+            }
+            if (items.length > 100) {
+                return res.status(400).json({ error: 'Maximum 100 events per import.' });
+            }
+            const result = await RFIEventService.importEvents(items, req.user);
+            const statusCode = result.created.length === 0 ? 422 : 200;
+            res.status(statusCode).json(result);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    }
+
     static async listEvents(req, res) {
         try {
             const filters = { status: req.query.status };

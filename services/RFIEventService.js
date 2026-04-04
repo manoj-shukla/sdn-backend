@@ -4,7 +4,8 @@ const NotificationService = require('./NotificationService');
 const InvitationService = require('./InvitationService');
 
 const VALID_EVENT_TRANSITIONS = {
-    DRAFT: ['OPEN'],
+    DRAFT: ['OPEN', 'SCHEDULED'],
+    SCHEDULED: ['OPEN', 'DRAFT'],   // can be published early or reverted to draft
     OPEN: ['CLOSED'],
     CLOSED: ['CONVERTED', 'ARCHIVED'],
     CONVERTED: [],
@@ -23,18 +24,22 @@ const VALID_INVITATION_TRANSITIONS = {
 class RFIEventService {
 
     static async createEvent(data, user) {
-        const { title, description, templateId, publishDate, deadline } = data;
+        const { title, description, templateId, publishDate, deadline, startDate } = data;
         if (!title) throw new Error('title is required');
 
         const rfiId = randomUUID();
         const buyerId = user.buyerId || null;
 
+        // Determine initial status: if a future start date is provided, mark as SCHEDULED
+        const hasSchedule = startDate && new Date(startDate) > new Date();
+        const initialStatus = hasSchedule ? 'SCHEDULED' : 'DRAFT';
+
         return new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO rfi_event (rfi_id, template_id, title, description, buyer_id, publish_date, deadline, status, created_by, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                `INSERT INTO rfi_event (rfi_id, template_id, title, description, buyer_id, publish_date, deadline, start_date, status, created_by, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
                 [rfiId, templateId || null, title, description || null, buyerId,
-                 publishDate || null, deadline || null, user.userId],
+                 publishDate || null, deadline || null, startDate || null, initialStatus, user.userId],
                 function(err) {
                     if (err) return reject(err);
                     db.get(`SELECT * FROM rfi_event WHERE rfi_id = ?`, [rfiId], (err2, row) => {
@@ -82,7 +87,7 @@ class RFIEventService {
     }
 
     static async getEventById(rfiId) {
-        const row = await new Promise((resolve, reject) => {
+        let row = await new Promise((resolve, reject) => {
             db.get(`SELECT * FROM rfi_event WHERE rfi_id = ?`, [rfiId], (err, row) => {
                 if (err) return reject(err);
                 resolve(row);
@@ -90,6 +95,32 @@ class RFIEventService {
         });
 
         if (!row) return null;
+
+        // ── Lazy activation: if SCHEDULED and start_date has passed, auto-open ──
+        if (row.status === 'SCHEDULED' && row.start_date && new Date(row.start_date) <= new Date()) {
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `UPDATE rfi_event SET status = 'OPEN', publish_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE rfi_id = ?`,
+                        [rfiId],
+                        (err) => err ? reject(err) : resolve()
+                    );
+                });
+                // Dispatch invitations that were queued (CREATED status)
+                await RFIEventService._dispatchInvitations(rfiId);
+                // Re-fetch the updated row
+                row = await new Promise((resolve, reject) => {
+                    db.get(`SELECT * FROM rfi_event WHERE rfi_id = ?`, [rfiId], (err, r) => {
+                        if (err) return reject(err);
+                        resolve(r);
+                    });
+                });
+                console.log(`[RFIEventService] Auto-activated scheduled event ${rfiId}`);
+            } catch (e) {
+                console.error(`[RFIEventService] Failed to auto-activate event ${rfiId}:`, e.message);
+            }
+        }
+
         const event = RFIEventService._normalize(row);
 
         // Enrich with template (sections + questions) for supplier response page
@@ -185,7 +216,8 @@ class RFIEventService {
     static async publishEvent(rfiId, user) {
         const current = await RFIEventService.getEventById(rfiId);
         if (!current) throw new Error('RFI event not found');
-        if (!VALID_EVENT_TRANSITIONS[current.status] || !VALID_EVENT_TRANSITIONS[current.status].includes('OPEN')) {
+        // Allow publishing from DRAFT or SCHEDULED (manual early publish)
+        if (!['DRAFT', 'SCHEDULED'].includes(current.status)) {
             throw new Error(`Cannot publish event in status ${current.status}`);
         }
 
@@ -498,6 +530,81 @@ class RFIEventService {
         }
     }
 
+    /**
+     * Bulk-import RFI events from a JSON array.
+     * Each item may reference a template by name (templateName) or ID (templateId).
+     * Returns { created: [...], errors: [...] }
+     */
+    static async importEvents(items, user) {
+        const RFITemplateService = require('./RFITemplateService');
+
+        // Build a name → id map from all published templates once
+        const allTemplates = await new Promise((resolve, reject) => {
+            db.all(`SELECT template_id, template_name FROM rfi_template WHERE status = 'PUBLISHED'`, [], (err, rows) => {
+                if (err) return reject(err);
+                resolve(rows || []);
+            });
+        });
+        const templateByName = new Map(allTemplates.map(t => [t.template_name.toLowerCase().trim(), t.template_id]));
+        const templateById   = new Map(allTemplates.map(t => [String(t.template_id), t.template_id]));
+
+        const created = [];
+        const errors  = [];
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const rowLabel = `Row ${i + 1}${item.title ? ` ("${item.title}")` : ''}`;
+
+            try {
+                // Resolve template
+                let resolvedTemplateId = null;
+                if (item.templateId) {
+                    resolvedTemplateId = templateById.get(String(item.templateId)) || null;
+                } else if (item.templateName) {
+                    resolvedTemplateId = templateByName.get(item.templateName.toLowerCase().trim()) || null;
+                }
+                if (!resolvedTemplateId) {
+                    errors.push({
+                        row: i + 1,
+                        title: item.title || null,
+                        error: item.templateName
+                            ? `Template "${item.templateName}" not found or not published`
+                            : 'templateName or templateId is required'
+                    });
+                    continue;
+                }
+
+                // Validate required fields
+                if (!item.title || !item.title.trim()) {
+                    errors.push({ row: i + 1, title: null, error: 'title is required' });
+                    continue;
+                }
+                if (!item.deadline) {
+                    errors.push({ row: i + 1, title: item.title, error: 'deadline is required' });
+                    continue;
+                }
+                if (new Date(item.deadline) <= new Date()) {
+                    errors.push({ row: i + 1, title: item.title, error: 'deadline must be in the future' });
+                    continue;
+                }
+
+                const event = await RFIEventService.createEvent({
+                    title: item.title.trim(),
+                    description: item.description || null,
+                    templateId: resolvedTemplateId,
+                    deadline: item.deadline,
+                    startDate: item.startDate || null,
+                }, user);
+
+                created.push({ row: i + 1, title: event.title, rfiId: event.rfiId });
+            } catch (err) {
+                errors.push({ row: i + 1, title: item.title || null, error: err.message });
+            }
+        }
+
+        return { created, errors };
+    }
+
     static _normalize(row) {
         if (!row) return null;
         return {
@@ -507,6 +614,7 @@ class RFIEventService {
             description: row.description,
             buyerId: row.buyer_id,
             publishDate: row.publish_date,
+            startDate: row.start_date || null,
             deadline: row.deadline,
             status: row.status,
             createdBy: row.created_by,

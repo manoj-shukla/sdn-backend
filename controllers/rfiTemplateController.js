@@ -7,7 +7,9 @@ class RFITemplateController {
             const result = await RFITemplateService.createTemplate(req.body, req.user);
             res.json(result);
         } catch (err) {
-            const status = err.message.includes('required') ? 400 : 500;
+            const status = err.message.includes('required') ? 400
+                : err.message.includes('already exists') ? 409
+                : 500;
             res.status(status).json({ error: err.message });
         }
     }
@@ -36,7 +38,10 @@ class RFITemplateController {
             const result = await RFITemplateService.updateTemplate(req.params.id, req.body, req.user);
             res.json(result);
         } catch (err) {
-            const status = err.message.includes('not found') ? 404 : err.message.includes('Only DRAFT') ? 422 : 500;
+            const status = err.message.includes('not found') ? 404
+                : err.message.includes('Only DRAFT') ? 422
+                : err.message.includes('already exists') ? 409
+                : 500;
             res.status(status).json({ error: err.message });
         }
     }
@@ -58,6 +63,23 @@ class RFITemplateController {
         } catch (err) {
             const status = err.message.includes('not found') ? 404 : err.message.includes('Cannot archive') ? 422 : 500;
             res.status(status).json({ error: err.message });
+        }
+    }
+
+    static async importTemplates(req, res) {
+        try {
+            const rows = req.body;
+            if (!Array.isArray(rows) || rows.length === 0) {
+                return res.status(400).json({ error: 'Request body must be a non-empty array of rows.' });
+            }
+            if (rows.length > 500) {
+                return res.status(400).json({ error: 'Maximum 500 rows per import.' });
+            }
+            const result = await RFITemplateService.importTemplates(rows, req.user);
+            const status = result.created.length === 0 ? 422 : 200;
+            res.status(status).json(result);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
         }
     }
 

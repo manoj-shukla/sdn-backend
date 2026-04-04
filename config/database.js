@@ -1077,6 +1077,26 @@ class PostgresWrapper {
                 });
             });
 
+            // Migration: Add start_date to rfi_event for scheduled publishing
+            await new Promise((resolve) => {
+                this.run(`ALTER TABLE rfi_event ADD COLUMN IF NOT EXISTS start_date TIMESTAMP;`, [], (err) => {
+                    if (err) console.warn("RFI Event start_date migration warning (likely already exists):", err.message);
+                    else console.log("RFI Event start_date column added.");
+                    resolve();
+                });
+            });
+
+            // Migration: Add library_question_id to template_question for library referencing
+            // This is the enterprise-level FK that links template questions back to the question library.
+            // Nullable so existing inline questions remain unaffected.
+            await new Promise((resolve) => {
+                this.run(`ALTER TABLE template_question ADD COLUMN IF NOT EXISTS library_question_id UUID;`, [], (err) => {
+                    if (err) console.warn("template_question library_question_id migration warning:", err.message);
+                    else console.log("template_question library_question_id column added.");
+                    resolve();
+                });
+            });
+
             // Migration: Change notifications.entityId from INTEGER to TEXT (to support UUID entity references)
             const notificationsMigrationSql = `
                 ALTER TABLE notifications ALTER COLUMN entityid TYPE TEXT USING entityid::TEXT;

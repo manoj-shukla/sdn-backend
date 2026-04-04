@@ -16,6 +16,7 @@ const RFIAnalyticsController = require('../controllers/rfiAnalyticsController');
 // ============================================================
 
 router.post('/templates', authenticateToken, requireAdmin, RFITemplateController.createTemplate);
+router.post('/templates/import', authenticateToken, requireAdmin, RFITemplateController.importTemplates);
 router.get('/templates', authenticateToken, requireRole('BUYER'), RFITemplateController.listTemplates);
 router.get('/templates/:id', authenticateToken, requireRole('BUYER'), RFITemplateController.getTemplateById);
 router.put('/templates/:id', authenticateToken, requireAdmin, RFITemplateController.updateTemplate);
@@ -44,6 +45,7 @@ router.delete('/questions/:id', authenticateToken, requireAdmin, RFIQuestionLibr
 // ============================================================
 
 router.post('/events', authenticateToken, requireAdmin, RFIEventController.createEvent);
+router.post('/events/import', authenticateToken, requireAdmin, RFIEventController.importEvents);
 router.get('/events', authenticateToken, requireRole('BUYER'), RFIEventController.listEvents);
 router.get('/events/active-count', authenticateToken, requireRole('BUYER'), RFIEventController.getActiveCount);
 router.get('/events/:id', authenticateToken, RFIEventController.getEventById);
