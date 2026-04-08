@@ -146,9 +146,9 @@ class AuthService {
                 const resetToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
                 db.run(`
-                    INSERT INTO password_resets (email, token, expires_at) 
+                    INSERT INTO password_resets (email, token, expiresat)
                     VALUES ($1, $2, NOW() + INTERVAL '1 hour')
-                    ON CONFLICT (email) DO UPDATE SET token = $2, expires_at = NOW() + INTERVAL '1 hour'
+                    ON CONFLICT (email) DO UPDATE SET token = $2, expiresat = NOW() + INTERVAL '1 hour'
                 `, [email, resetToken],
                     (err) => {
                         if (err) return reject(new Error("Failed to generate token"));

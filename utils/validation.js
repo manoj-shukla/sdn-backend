@@ -141,12 +141,7 @@ class Validator {
             }
         }
 
-        // Password validation (optional for creation, will use default if missing)
-        if (data.password !== undefined && data.password !== null && data.password !== '') {
-            if (!isValidPassword(data.password)) {
-                errors.push({ field: 'password', message: ErrorMessages.INVALID_PASSWORD });
-            }
-        }
+        // Password validation (no complexity rules enforced)
         // Removed mandatory check for creation to allow server-side default password
 
         // Role validation
@@ -462,8 +457,6 @@ class Validator {
 
         if (!data.newPassword) {
             errors.push({ field: 'newPassword', message: ErrorMessages.REQUIRED('New password') });
-        } else if (!isValidPassword(data.newPassword)) {
-            errors.push({ field: 'newPassword', message: ErrorMessages.INVALID_PASSWORD });
         }
 
         return errors;
@@ -481,12 +474,6 @@ class Validator {
 
         if (!data.newPassword) {
             errors.push({ field: 'newPassword', message: ErrorMessages.REQUIRED('New password') });
-        } else if (!isValidPassword(data.newPassword)) {
-            errors.push({ field: 'newPassword', message: ErrorMessages.INVALID_PASSWORD });
-        }
-
-        if (data.currentPassword === data.newPassword) {
-            errors.push({ field: 'newPassword', message: 'New password must be different from current password' });
         }
 
         return errors;

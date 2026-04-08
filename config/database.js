@@ -189,7 +189,12 @@ class PostgresWrapper {
         console.log(`[DB] Executing: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
         const startTime = Date.now();
         try {
-            const res = await this.pool.query(text, item.params);
+            // When params is empty, use simple query protocol (no values arg) so that
+            // multi-statement DDL batches (CREATE TABLE, ALTER TABLE, etc.) are fully executed.
+            // The extended query protocol (used when params array is passed) rejects multiple statements.
+            const res = item.params && item.params.length > 0
+                ? await this.pool.query(text, item.params)
+                : await this.pool.query(text);
             console.log(`[DB] Completed in ${Date.now() - startTime}ms. Rows: ${res.rows?.length || 0}`);
 
             // Handle Multi-statement results (Array) vs Single result
@@ -652,21 +657,27 @@ class PostgresWrapper {
                 CREATE INDEX IF NOT EXISTS idx_contacts_supplier ON contacts(supplierId);
                 CREATE INDEX IF NOT EXISTS idx_workflow_instances_supplier ON workflow_instances(supplierId);
                 CREATE INDEX IF NOT EXISTS idx_step_instances_instance ON step_instances(instanceId);
-                CREATE INDEX IF NOT EXISTS idx_scr_supplier ON supplier_change_requests(supplierId);
-                CREATE INDEX IF NOT EXISTS idx_sci_request ON supplier_change_items(requestId);
             `;
 
-            // Execute all schema creation in one batch
-            await new Promise((resolve) => {
-                this.run(sqlSchema, [], (err) => {
-                    if (err) {
-                        console.error("Error initializing schema:", err.message);
-                    } else {
-                        console.log("Schema Initialized Successfully (Batch Mode)");
-                    }
-                    resolve();
+            // Execute schema creation in chunks to be more robust
+            const schemaChunks = sqlSchema.split(';').filter(s => s.trim().length > 0);
+            console.log(`Executing schema in ${schemaChunks.length} chunks...`);
+            
+            for (const chunk of schemaChunks) {
+                await new Promise((resolve) => {
+                    this.run(chunk, [], (err) => {
+                        if (err) {
+                            // Only report error if it's NOT a "column already exists" or "relation already exists"
+                            // which might happen with IF NOT EXISTS in some cases or multi-statement splits
+                            if (!err.message.includes('already exists') && !err.message.includes('duplicate')) {
+                                console.error(`[Schema Init Error] chunk failed: ${chunk.trim().substring(0, 50)}... -> ${err.message}`);
+                            }
+                        }
+                        resolve();
+                    });
                 });
-            });
+            }
+            console.log("Basic Schema Initialization complete.");
 
             // MIGRATION: Rename expires_at to expiresat if it exists
             await new Promise((resolve) => {
@@ -795,6 +806,34 @@ class PostgresWrapper {
                 this.run(milestone2Sql, [], (err) => {
                     if (err) console.warn("Milestone 2 Migration Warning:", err.message);
                     else console.log("Milestone 2 Schema applied successfully.");
+                    resolve();
+                });
+            });
+
+            // INDEXES for Milestone 2 tables (must run after those tables exist)
+            const milestone2IndexSql = `
+                CREATE INDEX IF NOT EXISTS idx_scr_supplier ON supplier_change_requests(supplierId);
+                CREATE INDEX IF NOT EXISTS idx_sci_request ON supplier_change_items(requestId);
+            `;
+            await new Promise((resolve) => {
+                this.run(milestone2IndexSql, [], (err) => {
+                    if (err) console.warn("Milestone 2 Index Warning:", err.message);
+                    else console.log("Milestone 2 Indexes applied.");
+                    resolve();
+                });
+            });
+
+            // MIGRATION: Ensure users table has all required columns (handles old deployments)
+            const userColumnsMigrationSql = `
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS buyerId INTEGER;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS supplierId INTEGER;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS circleId INTEGER;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS subRole TEXT;
+            `;
+            await new Promise((resolve) => {
+                this.run(userColumnsMigrationSql, [], (err) => {
+                    if (err) console.warn("Users Column Migration Warning:", err.message);
+                    else console.log("Users column migration applied.");
                     resolve();
                 });
             });
@@ -1123,11 +1162,13 @@ class PostgresWrapper {
 
         };
 
-        runSchema().then(() => {
+        try {
+            await runSchema();
             this.initialized = true;
-        }).catch(err => {
+            console.log("Database fully initialized.");
+        } catch (err) {
             console.error("Database initialization failed:", err);
-        });
+        }
     }
 }
 

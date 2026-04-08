@@ -60,6 +60,20 @@ if (!isVercel && !fs.existsSync(uploadDir)) {
 }
 app.use('/uploads', express.static(uploadDir));
 
+// Health check - tests DB connectivity
+app.get('/health', (req, res) => {
+    db.get('SELECT 1 as ok', [], (err, row) => {
+        if (err) {
+            return res.status(503).json({
+                status: 'error',
+                db: 'unreachable',
+                message: err.message
+            });
+        }
+        res.json({ status: 'ok', db: 'connected' });
+    });
+});
+
 // Swagger
 // To fix "SwaggerUIBundle is not defined" on Vercel production,
 // we serve the swagger-ui assets from a CDN instead of the local node_modules
@@ -91,7 +105,7 @@ app.get('/api-docs', (req, res) => {
 app.use('/api-docs', swaggerUi.setup(swaggerDocument, swaggerOptions));
 app.get('/api-docs.json', (req, res) => res.json(swaggerDocument));
 
-// Database Init
+// Database Init — start the HTTP server only after schema is ready
 (async () => {
     try {
         if (db.init) {
@@ -100,6 +114,14 @@ app.get('/api-docs.json', (req, res) => res.json(swaggerDocument));
         }
     } catch (err) {
         console.error('Database initialization failed:', err);
+    } finally {
+        // Always start listening, even if migrations had warnings,
+        // so the server doesn't hang. Core tables are created above.
+        if (require.main === module) {
+            app.listen(PORT, () => {
+                console.log(`Server running on http://localhost:${PORT}`);
+            });
+        }
     }
 })();
 
@@ -229,16 +251,6 @@ app.get('/test-approval-flow', async (req, res) => {
 });
 // -------------------------------
 
-// Start Server
-console.log("[DEBUG-INIT] Checking if main module to start server...", require.main === module);
-if (require.main === module) {
-    console.log("[DEBUG-INIT] Calling app.listen...");
-    app.listen(PORT, () => {
-        console.log(`Server running on http://localhost:${PORT}`);
-    });
-    console.log("[DEBUG-INIT] app.listen called.");
-} else {
-    console.log("[DEBUG-INIT] NOT running as main module.");
-}
+// Server is started inside the DB init block above (after schema is ready)
 
 module.exports = app;

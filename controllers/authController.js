@@ -8,9 +8,13 @@ class AuthController {
             res.json(result);
         } catch (err) {
             let status = 500;
+            let message = err.message;
             if (err.message === 'Invalid credentials') status = 401;
-            if (err.message === 'Account is inactive') status = 403;
-            res.status(status).json({ error: err.message });
+            else if (err.message === 'Account is inactive') status = 403;
+            else if (err.message && (err.message.includes('EAI_AGAIN') || err.message.includes('ECONNREFUSED') || err.message.includes('ETIMEDOUT') || err.message.includes('connect'))) {
+                message = 'Database unavailable. Please try again shortly or contact support.';
+            }
+            res.status(status).json({ error: message });
         }
     }
 
