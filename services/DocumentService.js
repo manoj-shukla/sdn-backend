@@ -102,13 +102,15 @@ class DocumentService {
                 // 1. Fetch persistent documents
                 const rawDocs = await new Promise((res, rej) => {
                     logDebug(`getSupplierDocuments: Fetching docs for supplierId: ${supplierId}`);
-                    db.all("SELECT * FROM documents WHERE supplierid = ? AND isactive = TRUE ORDER BY documenttype, documentid DESC", [supplierId], (err, rows) => {
+                    db.all("SELECT * FROM documents WHERE supplierid = ? ORDER BY documenttype, documentid DESC", [supplierId], (err, rows) => {
                         if (err) {
                             logDebug(`getSupplierDocuments: DB Error: ${err.message}`);
                             return rej(err);
                         }
-                        logDebug(`getSupplierDocuments: Found ${rows?.length || 0} persistent docs`);
-                        res(rows || []);
+                        // Filter out soft-deleted docs in JS (isactive column may not exist on older DBs)
+                        const activeRows = (rows || []).filter(r => r.isactive !== false);
+                        logDebug(`getSupplierDocuments: Found ${activeRows.length} active docs (${rows?.length || 0} total)`);
+                        res(activeRows);
                     });
                 });
 
@@ -131,16 +133,22 @@ class DocumentService {
                     };
                 });
 
-                // 2. Fetch pending document change requests
-                const pendingItems = await new Promise((res, rej) => {
+                // 2. Fetch pending document change requests (fail-safe — missing columns won't crash)
+                const pendingItems = await new Promise((res) => {
                     db.all(`
                         SELECT i.newvalue, i.itemid, r.requestid, r.requestedat, i.status, i.rejectionreason
                         FROM supplier_change_items i
                         JOIN supplier_change_requests r ON i.requestid = r.requestid
-                        WHERE r.supplierid = ? 
+                        WHERE r.supplierid = ?
                           AND i.fieldname = 'documents'
                           AND i.status IN ('PENDING', 'REJECTED')
-                    `, [supplierId], (err, rows) => err ? rej(err) : res(rows || []));
+                    `, [supplierId], (err, rows) => {
+                        if (err) {
+                            logDebug(`getSupplierDocuments: change_items query error (non-fatal): ${err.message}`);
+                            return res([]); // degrade gracefully — return docs without pending changes
+                        }
+                        res(rows || []);
+                    });
                 });
 
                 // 3. Merge
@@ -367,7 +375,7 @@ class DocumentService {
     static async getVerificationSummary(supplierId) {
         return new Promise((resolve, reject) => {
             db.all(
-                `SELECT documentid, documenttype, documentname, verificationstatus FROM documents WHERE supplierid = ? AND isactive = TRUE`,
+                `SELECT documentid, documenttype, documentname, verificationstatus FROM documents WHERE supplierid = ? AND (isactive IS NULL OR isactive = TRUE)`,
                 [supplierId],
                 (err, rows) => {
                     if (err) return reject(err);
@@ -425,7 +433,7 @@ class DocumentService {
                 JOIN suppliers s ON d.supplierid = s.supplierid
                 WHERE d.expirydate <= CURRENT_DATE + CAST(? AS INTEGER)
                   AND d.expirydate >= CURRENT_DATE
-                  AND d.isactive = TRUE
+                  AND (d.isactive IS NULL OR d.isactive = TRUE)
             `;
             const params = [parseInt(days) || 30];
             if (supplierId) {

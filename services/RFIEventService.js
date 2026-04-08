@@ -159,6 +159,24 @@ class RFIEventService {
         return event;
     }
 
+    static async getSupplierInvitationCount(supplierId) {
+        // Returns count of open RFI events where supplier is invited and hasn't submitted yet
+        // Note: published events have status 'OPEN' (set by publishEvent)
+        return new Promise((resolve) => {
+            db.get(
+                `SELECT COUNT(*)::int AS count
+                 FROM rfi_invitation i
+                 JOIN rfi_event e ON i.rfi_id = e.rfi_id
+                 LEFT JOIN supplier_rfi_response r ON r.rfi_id = i.rfi_id AND r.supplier_id = i.supplier_id
+                 WHERE i.supplier_id = ?
+                   AND e.status = 'OPEN'
+                   AND (r.supplier_id IS NULL OR r.status != 'SUBMITTED')`,
+                [supplierId],
+                (err, row) => resolve(err ? 0 : (Number(row?.count) || 0))
+            );
+        });
+    }
+
     static async getSupplierInvitations(supplierId) {
         return new Promise((resolve, reject) => {
             db.all(
@@ -276,6 +294,40 @@ class RFIEventService {
     static async convertToRFP(rfiId, user) {
         const current = await RFIEventService.getEventById(rfiId);
         if (!current) throw new Error('RFI event not found');
+
+        const RFIToRFPService = require('./RFIToRFPService');
+
+        // Recovery path: already CONVERTED but RFP row may be missing (e.g. promoted before migration)
+        if (current.status === 'CONVERTED') {
+            const existingRfp = await new Promise((res) => {
+                db.get(`SELECT rfp_id, name FROM rfp WHERE source_rfi_id = ?`, [rfiId], (err, row) => {
+                    res(err ? null : row);
+                });
+            });
+            if (existingRfp) {
+                // RFP exists — check if it has any suppliers yet. If not, sync them now.
+                const rfpId = existingRfp.rfp_id;
+                const supplierCount = await new Promise((res) => {
+                    db.get(`SELECT COUNT(*)::int as cnt FROM rfp_supplier WHERE rfp_id = ?`, [rfpId], (err, row) => {
+                        if (err) return res(0);
+                        // PostgreSQL may return 'cnt' or 'count' depending on wrapper
+                        const val = row?.cnt ?? row?.count ?? 0;
+                        res(Number(val) || 0);
+                    });
+                });
+                if (Number(supplierCount) === 0) {
+                    // No suppliers yet — back-fill shortlisted suppliers from the RFI
+                    console.log(`[RFIEventService] Back-filling suppliers for RFP ${rfpId} from RFI ${rfiId}`);
+                    await RFIToRFPService.syncShortlistedSuppliers(rfiId, rfpId);
+                }
+                return { event: current, rfpDraft: { rfpId, rfpName: existingRfp.name, sourceRfiId: rfiId, status: 'DRAFT' } };
+            }
+            // No RFP row found — create one now (late recovery)
+            console.log(`[RFIEventService] Recovery: creating missing RFP for already-CONVERTED RFI ${rfiId}`);
+            const rfpDraft = await RFIToRFPService.convertRFIToRFP(rfiId, user);
+            return { event: current, rfpDraft };
+        }
+
         if (!VALID_EVENT_TRANSITIONS[current.status] || !VALID_EVENT_TRANSITIONS[current.status].includes('CONVERTED')) {
             throw new Error(`Cannot convert event in status ${current.status}`);
         }
@@ -288,7 +340,6 @@ class RFIEventService {
                     if (err) return reject(err);
                     db.get(`SELECT * FROM rfi_event WHERE rfi_id = ?`, [rfiId], (err2, row) => {
                         if (err2) return reject(err2);
-                        const RFIToRFPService = require('./RFIToRFPService');
                         RFIToRFPService.convertRFIToRFP(rfiId, user)
                             .then(rfpDraft => resolve({ event: RFIEventService._normalize(row), rfpDraft }))
                             .catch(reject);

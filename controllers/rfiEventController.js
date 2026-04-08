@@ -133,6 +133,15 @@ class RFIEventController {
         } catch (err) { res.status(500).json({ error: err.message }); }
     }
 
+    static async getSupplierInvitationCount(req, res) {
+        try {
+            const supplierId = req.user.supplierId;
+            if (!supplierId) return res.json({ count: 0 });
+            const count = await RFIEventService.getSupplierInvitationCount(supplierId);
+            res.json({ count });
+        } catch (err) { res.json({ count: 0 }); }
+    }
+
     static async validateEligibility(req, res) {
         try {
             const supplierIds = req.body.supplierIds || [];

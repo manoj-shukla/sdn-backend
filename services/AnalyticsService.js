@@ -148,9 +148,16 @@ class AnalyticsService {
             try {
                 // If user has multiple memberships, aggregate stats
                 const memberships = (user && user.memberships) || [];
-                const targetIds = memberships.length > 0
+                const rawIds = memberships.length > 0
                     ? memberships.map(m => m.supplierId || m.supplierid)
                     : [supplierId];
+                // Filter out null/undefined to prevent PostgreSQL type errors
+                const targetIds = rawIds.filter(id => id != null);
+
+                // No valid supplier IDs — return zero stats immediately
+                if (targetIds.length === 0) {
+                    return resolve({ totalOrders: 0, completedOrders: 0, totalSpent: 0, avgCompliance: 0, activeBuyers: 0 });
+                }
 
                 const placeholders = targetIds.map(() => '?').join(',');
 

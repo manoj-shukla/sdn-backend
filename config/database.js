@@ -711,6 +711,11 @@ class PostgresWrapper {
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS mustChangePassword BOOLEAN DEFAULT FALSE;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS isActive BOOLEAN DEFAULT TRUE;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS isActive BOOLEAN DEFAULT TRUE;
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploadedByUsername TEXT;
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS verifiedByUserId INTEGER;
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS verifiedAt TIMESTAMP;
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS "firstName" TEXT;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS "lastName" TEXT;
                 ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS submissionType TEXT DEFAULT 'INITIAL';
@@ -1159,6 +1164,165 @@ class PostgresWrapper {
                     resolve();
                 });
             });
+
+            // ── RFP MODULE SCHEMA ─────────────────────────────────────────────────
+            const rfpModuleSql = `
+                CREATE TABLE IF NOT EXISTS rfp (
+                    rfp_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name TEXT NOT NULL,
+                    category TEXT,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    deadline TIMESTAMP NOT NULL,
+                    description TEXT,
+                    status TEXT NOT NULL DEFAULT 'DRAFT'
+                        CHECK(status IN ('DRAFT','OPEN','CLOSED','AWARDED','ARCHIVED')),
+                    buyer_id INTEGER,
+                    source_rfi_id UUID,
+                    created_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS rfp_item (
+                    item_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    quantity NUMERIC NOT NULL DEFAULT 1,
+                    unit TEXT,
+                    specifications TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS rfp_supplier (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER,
+                    email TEXT,
+                    status TEXT NOT NULL DEFAULT 'INVITED'
+                        CHECK(status IN ('INVITED','ACCEPTED','DECLINED','SUBMITTED','AWARDED')),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id),
+                    UNIQUE(rfp_id, email)
+                );
+
+                CREATE TABLE IF NOT EXISTS supplier_rfp_response (
+                    response_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'DRAFT'
+                        CHECK(status IN ('DRAFT','SUBMITTED')),
+                    notes TEXT,
+                    submitted_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS rfp_response_item (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    response_id UUID NOT NULL REFERENCES supplier_rfp_response(response_id) ON DELETE CASCADE,
+                    item_id UUID NOT NULL REFERENCES rfp_item(item_id) ON DELETE CASCADE,
+                    price NUMERIC,
+                    lead_time INTEGER,
+                    moq NUMERIC,
+                    notes TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS rfp_insight (
+                    insight_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER,
+                    type TEXT NOT NULL
+                        CHECK(type IN ('PRICE_GAP','LEAD_TIME','MOQ','RISK')),
+                    message TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'MEDIUM'
+                        CHECK(severity IN ('LOW','MEDIUM','HIGH')),
+                    auto_generated BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS negotiation_round (
+                    round_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    round_number INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'OPEN'
+                        CHECK(status IN ('OPEN','CLOSED')),
+                    created_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS negotiation_change (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    round_id UUID NOT NULL REFERENCES negotiation_round(round_id) ON DELETE CASCADE,
+                    rfp_id UUID NOT NULL,
+                    supplier_id INTEGER,
+                    item_id UUID,
+                    prev_price NUMERIC,
+                    new_price NUMERIC,
+                    delta_pct NUMERIC,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS rfp_award (
+                    award_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    allocation_pct NUMERIC,
+                    awarded_value NUMERIC,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            `;
+            await new Promise((resolve) => {
+                this.run(rfpModuleSql, [], (err) => {
+                    if (err) console.warn("RFP Module schema warning:", err.message);
+                    else console.log("RFP Module schema applied successfully.");
+                    resolve();
+                });
+            });
+
+            // RFI + RFP column migrations — safe for existing DBs (ADD COLUMN IF NOT EXISTS is idempotent)
+            const columnMigrations = [
+                // rfp table
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS source_rfi_id UUID`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS created_by INTEGER`,
+                // rfi_event table — start_date was added later
+                `ALTER TABLE rfi_event ADD COLUMN IF NOT EXISTS start_date TIMESTAMP`,
+                // supplier_rfi_response — evaluation_status and completion_percent added later
+                `ALTER TABLE supplier_rfi_response ADD COLUMN IF NOT EXISTS evaluation_status TEXT DEFAULT 'UNDER_REVIEW'`,
+                `ALTER TABLE supplier_rfi_response ADD COLUMN IF NOT EXISTS completion_percent NUMERIC DEFAULT 0`,
+                // rfi_invitation — supplier_id might not exist on very old schemas
+                `ALTER TABLE rfi_invitation ADD COLUMN IF NOT EXISTS supplier_id INTEGER`,
+            ];
+            for (const sql of columnMigrations) {
+                await new Promise((resolve) => {
+                    this.run(sql, [], (err) => {
+                        if (err && !err.message?.includes('already exists')) {
+                            console.warn(`[DB Migration] Column migration warning: ${err.message}`);
+                        }
+                        resolve();
+                    });
+                });
+            }
+            console.log("RFI/RFP column migrations applied.");
+
+            // UNIQUE index migrations — ensures ON CONFLICT clauses work and prevents duplicates
+            const indexMigrations = [
+                // rfp_supplier: prevent duplicate (rfp_id, supplier_id) pairs
+                `CREATE UNIQUE INDEX IF NOT EXISTS idx_rfp_supplier_unique ON rfp_supplier(rfp_id, supplier_id)`,
+            ];
+            for (const sql of indexMigrations) {
+                await new Promise((resolve) => {
+                    this.run(sql, [], (err) => {
+                        if (err && !err.message?.includes('already exists')) {
+                            console.warn(`[DB Migration] Index migration warning: ${err.message}`);
+                        }
+                        resolve();
+                    });
+                });
+            }
+            console.log("RFI/RFP index migrations applied.");
 
         };
 

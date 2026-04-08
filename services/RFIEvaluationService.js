@@ -38,6 +38,62 @@ class RFIEvaluationService {
                         }))
                     }));
 
+                    // Process responses rows into the final shape
+                    const processResponses = (responses) => {
+                        if (!responses || responses.length === 0) {
+                            return resolve({ rfiId, rfiTitle: event.title, sections, suppliers: [] });
+                        }
+                        const responseIds = responses.map(r => r.response_id);
+                        const placeholders = responseIds.map(() => '?').join(',');
+                        db.all(
+                            `SELECT * FROM supplier_rfi_response_detail WHERE response_id IN (${placeholders})`,
+                            responseIds,
+                            (errD, details) => {
+                                if (errD) return reject(errD);
+                                const answerMap = {};
+                                for (const detail of (details || [])) {
+                                    if (!answerMap[detail.response_id]) answerMap[detail.response_id] = {};
+                                    let val = detail.answer_value;
+                                    try {
+                                        if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+                                            val = JSON.parse(val);
+                                        }
+                                    } catch(e) {}
+                                    answerMap[detail.response_id][detail.question_id] = val;
+                                }
+                                const suppliers = responses.map(r => {
+                                    let notes = [];
+                                    if (r.internal_notes) {
+                                        try { notes = JSON.parse(r.internal_notes); } catch(e) {}
+                                        if (!Array.isArray(notes)) notes = [];
+                                    }
+                                    const answers = [];
+                                    for (const s of sections) {
+                                        for (const q of (s.questions || [])) {
+                                            const qd = q.question || q;
+                                            const val = (answerMap[r.response_id] || {})[qd.questionId];
+                                            if (val !== undefined && val !== null) {
+                                                answers.push({ questionId: qd.questionId, value: val });
+                                            }
+                                        }
+                                    }
+                                    return {
+                                        supplierId: r.supplier_id,
+                                        supplierName: r.supplier_name,
+                                        invitationStatus: r.invitation_status || 'SUBMITTED',
+                                        evaluationStatus: r.evaluation_status || 'PENDING',
+                                        completionPercent: r.completion_percent || 100,
+                                        submittedAt: r.submission_date,
+                                        notes,
+                                        answers
+                                    };
+                                });
+                                resolve({ rfiId, rfiTitle: event.title, sections, suppliers });
+                            }
+                        );
+                    };
+
+                    // Fetch responses — with self-healing for missing evaluation columns
                     db.all(
                         `SELECT r.*, s.legalname as supplier_name, i.invitation_status
                          FROM supplier_rfi_response r
@@ -48,72 +104,7 @@ class RFIEvaluationService {
                         [rfiId],
                         (err3, responses) => {
                             if (err3) return reject(err3);
-                            if (!responses || responses.length === 0) {
-                                return resolve({ rfiId, rfiTitle: event.title, sections, suppliers: [] });
-                            }
-
-                            const responseIds = responses.map(r => r.response_id);
-                            const placeholders = responseIds.map(() => '?').join(',');
-
-                            db.all(
-                                `SELECT * FROM supplier_rfi_response_detail WHERE response_id IN (${placeholders})`,
-                                responseIds,
-                                (err4, details) => {
-                                    if (err4) return reject(err4);
-
-                                    const answerMap = {};
-                                    for (const detail of (details || [])) {
-                                        if (!answerMap[detail.response_id]) answerMap[detail.response_id] = {};
-                                        let val = detail.answer_value;
-                                        try { 
-                                            if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-                                                val = JSON.parse(val); 
-                                            }
-                                        } catch(e) {}
-                                        answerMap[detail.response_id][detail.question_id] = val;
-                                    }
-
-                                    const suppliers = responses.map(r => {
-                                        let notes = [];
-                                        if (r.internal_notes) {
-                                            try { notes = JSON.parse(r.internal_notes); } catch(e) {}
-                                            if (!Array.isArray(notes)) notes = [];
-                                        }
-
-                                        const answers = [];
-                                        for (const s of sections) {
-                                            for (const q of (s.questions || [])) {
-                                                const qd = q.question || q;
-                                                const val = (answerMap[r.response_id] || {})[qd.questionId];
-                                                if (val !== undefined && val !== null) {
-                                                    answers.push({
-                                                        questionId: qd.questionId,
-                                                        value: val
-                                                    });
-                                                }
-                                            }
-                                        }
-
-                                        return {
-                                            supplierId: r.supplier_id,
-                                            supplierName: r.supplier_name,
-                                            invitationStatus: r.invitation_status || 'SUBMITTED',
-                                            evaluationStatus: r.evaluation_status || 'PENDING',
-                                            completionPercent: r.completion_percent || 100,
-                                            submittedAt: r.submission_date,
-                                            notes,
-                                            answers
-                                        };
-                                    });
-
-                                    resolve({
-                                        rfiId,
-                                        rfiTitle: event.title,
-                                        sections,
-                                        suppliers
-                                    });
-                                }
-                            );
+                            processResponses(responses || []);
                         }
                     );
                 } catch (e) {
@@ -274,7 +265,7 @@ class RFIEvaluationService {
         });
         if (!response) throw new Error('Response not found');
 
-        return new Promise((resolve, reject) => {
+        const doUpdate = () => new Promise((resolve, reject) => {
             db.run(
                 `UPDATE supplier_rfi_response SET evaluation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE response_id = ?`,
                 [status, response.response_id],
@@ -284,6 +275,20 @@ class RFIEvaluationService {
                 }
             );
         });
+
+        try {
+            return await doUpdate();
+        } catch (err) {
+            // Self-heal: if evaluation_status column is missing, add it and retry
+            if (err && err.message && err.message.includes('evaluation_status')) {
+                console.warn('[RFIEvaluationService] evaluation_status column missing — adding it now');
+                await new Promise((res) => {
+                    db.run(`ALTER TABLE supplier_rfi_response ADD COLUMN IF NOT EXISTS evaluation_status TEXT DEFAULT 'UNDER_REVIEW'`, [], () => res());
+                });
+                return await doUpdate();
+            }
+            throw err;
+        }
     }
 
     static async requestClarification(rfiId, supplierId, message, user) {

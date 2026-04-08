@@ -49,10 +49,10 @@ router.post('/events/import', authenticateToken, requireAdmin, RFIEventControlle
 router.get('/events', authenticateToken, requireRole('BUYER'), RFIEventController.listEvents);
 router.get('/events/active-count', authenticateToken, requireRole('BUYER'), RFIEventController.getActiveCount);
 router.get('/events/:id', authenticateToken, RFIEventController.getEventById);
-router.put('/events/:id', authenticateToken, requireAdmin, RFIEventController.updateEvent);
-router.post('/events/:id/publish', authenticateToken, requireAdmin, RFIEventController.publishEvent);
-router.post('/events/:id/close', authenticateToken, requireAdmin, RFIEventController.closeEvent);
-router.post('/events/:id/convert-to-rfp', authenticateToken, requireAdmin, RFIEventController.convertToRFP);
+router.put('/events/:id', authenticateToken, requireRole('BUYER'), RFIEventController.updateEvent);
+router.post('/events/:id/publish', authenticateToken, requireRole('BUYER'), RFIEventController.publishEvent);
+router.post('/events/:id/close', authenticateToken, requireRole('BUYER'), RFIEventController.closeEvent);
+router.post('/events/:id/convert-to-rfp', authenticateToken, requireRole('BUYER'), RFIEventController.convertToRFP);
 
 // Invitations
 router.post('/events/:id/invitations', authenticateToken, requireAdmin, RFIEventController.addInvitations);
@@ -61,6 +61,7 @@ router.post('/events/:id/invitations/validate', authenticateToken, requireAdmin,
 
 // Supplier's own invitation inbox
 router.get('/invitations', authenticateToken, requireRole('SUPPLIER'), RFIEventController.getSupplierInvitations);
+router.get('/invitations/count', authenticateToken, requireRole('SUPPLIER'), RFIEventController.getSupplierInvitationCount);
 
 // ============================================================
 // SUPPLIER RESPONSES — /api/rfi/responses

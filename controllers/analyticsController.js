@@ -41,12 +41,16 @@ class AnalyticsController {
     }
     static async getSupplierSummary(req, res) {
         try {
-            const stats = await AnalyticsService.getSupplierSummary(req.user.userId, req.user);
+            const supplierId = req.user.supplierId || req.user.supplierid;
+            const stats = await AnalyticsService.getSupplierSummary(supplierId, req.user);
             res.json(stats);
         } catch (e) { res.status(500).json({ error: e.message }); }
     }
     static async getAggregateSupplierSummary(req, res) {
-        try { res.json(await AnalyticsService.getSupplierSummary(req.user.userId, req.user)); } catch (e) { res.status(500).json({ error: e.message }); }
+        try {
+            const supplierId = req.user.supplierId || req.user.supplierid;
+            res.json(await AnalyticsService.getSupplierSummary(supplierId, req.user));
+        } catch (e) { res.status(500).json({ error: e.message }); }
     }
     static async getSupplierSummaryById(req, res) {
         try { res.json(await AnalyticsService.getSupplierSummary(req.params.id, req.user)); } catch (e) { res.status(500).json({ error: e.message }); }

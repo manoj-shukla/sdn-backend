@@ -27,6 +27,7 @@ const roleRoutes = require('./routes/roleRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const rfiRoutes = require('./routes/rfiRoutes');
+const rfpRoutes = require('./routes/rfpRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -160,6 +161,7 @@ app.use('/api/roles', roleRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/rfi', rfiRoutes);
+app.use('/api/rfp', rfpRoutes);
 
 // Root Check
 app.get('/', (req, res) => {
