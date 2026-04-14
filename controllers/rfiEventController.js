@@ -127,8 +127,12 @@ class RFIEventController {
     static async getSupplierInvitations(req, res) {
         try {
             const supplierId = req.user.supplierId;
-            if (!supplierId) return res.status(403).json({ error: 'Supplier context required' });
-            const result = await RFIEventService.getSupplierInvitations(supplierId);
+            const userEmail  = req.user.email || null;
+            // Allow lookup even if supplierId is missing — fall back to email-only matching
+            if (!supplierId && !userEmail) {
+                return res.status(403).json({ error: 'Supplier context required' });
+            }
+            const result = await RFIEventService.getSupplierInvitations(supplierId, userEmail);
             res.json(result);
         } catch (err) { res.status(500).json({ error: err.message }); }
     }

@@ -17,7 +17,10 @@ class RFPService {
     // ─────────────────────────────────────────────────────────
 
     static async createRFP(data, user) {
-        const { name, category, currency, deadline, description, sourceRfiId } = data;
+        const { name, category, currency, deadline, description, sourceRfiId,
+                buRegion, incoterms, contactPerson, instructions, requireComplianceAck,
+                requireIso, requireGmp, requireFsc, minRevenueM,
+                weightCommercial, weightTechnical, weightQuality, weightLogistics, weightEsg } = data;
         if (!name) throw new Error('name is required');
         if (!currency) throw new Error('currency is required');
         if (!deadline) throw new Error('deadline is required');
@@ -26,12 +29,28 @@ class RFPService {
         const rfpId = randomUUID();
         const buyerId = user.buyerId || null;
 
+        // Normalise scoring weights — must sum to 100, fall back to defaults
+        const wC = parseFloat(weightCommercial) || 40;
+        const wT = parseFloat(weightTechnical)  || 25;
+        const wQ = parseFloat(weightQuality)    || 15;
+        const wL = parseFloat(weightLogistics)  || 10;
+        const wE = parseFloat(weightEsg)        || 10;
+
         return new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO rfp (rfp_id, name, category, currency, deadline, description, status, buyer_id, source_rfi_id, created_by, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                `INSERT INTO rfp (rfp_id, name, category, currency, deadline, description, status, buyer_id, source_rfi_id,
+                                  bu_region, incoterms, contact_person, instructions, require_compliance_ack,
+                                  require_iso, require_gmp, require_fsc, min_revenue_m,
+                                  weight_commercial, weight_technical, weight_quality, weight_logistics, weight_esg,
+                                  created_by, created_at, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,'DRAFT',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
                 [rfpId, name, category || null, currency, deadline, description || null,
-                 buyerId, sourceRfiId || null, user.userId],
+                 buyerId, sourceRfiId || null,
+                 buRegion || null, incoterms || null, contactPerson || null, instructions || null,
+                 requireComplianceAck || false,
+                 requireIso || false, requireGmp || false, requireFsc || false, minRevenueM || 0,
+                 wC, wT, wQ, wL, wE,
+                 user.userId],
                 function(err) {
                     if (err) return reject(err);
                     db.get(`SELECT * FROM rfp WHERE rfp_id = ?`, [rfpId], (err2, row) => {
@@ -164,20 +183,49 @@ class RFPService {
         if (!current) throw new Error('RFP not found');
         if (current.status !== 'DRAFT') throw new Error('Only DRAFT RFPs can be updated');
 
-        const { name, category, currency, deadline, description } = data;
+        const { name, category, currency, deadline, description,
+                buRegion, incoterms, contactPerson, instructions, requireComplianceAck,
+                requireIso, requireGmp, requireFsc, minRevenueM,
+                weightCommercial, weightTechnical, weightQuality, weightLogistics, weightEsg } = data;
         if (deadline && new Date(deadline) <= new Date()) throw new Error('deadline must be a future date');
 
         return new Promise((resolve, reject) => {
             db.run(
                 `UPDATE rfp SET
-                    name = COALESCE(?, name),
-                    category = COALESCE(?, category),
-                    currency = COALESCE(?, currency),
-                    deadline = COALESCE(?, deadline),
-                    description = COALESCE(?, description),
+                    name = COALESCE($1, name),
+                    category = COALESCE($2, category),
+                    currency = COALESCE($3, currency),
+                    deadline = COALESCE($4, deadline),
+                    description = COALESCE($5, description),
+                    bu_region = COALESCE($6, bu_region),
+                    incoterms = COALESCE($7, incoterms),
+                    contact_person = COALESCE($8, contact_person),
+                    instructions = COALESCE($9, instructions),
+                    require_compliance_ack = COALESCE($10, require_compliance_ack),
+                    require_iso = COALESCE($11, require_iso),
+                    require_gmp = COALESCE($12, require_gmp),
+                    require_fsc = COALESCE($13, require_fsc),
+                    min_revenue_m = COALESCE($14, min_revenue_m),
+                    weight_commercial = COALESCE($15, weight_commercial),
+                    weight_technical = COALESCE($16, weight_technical),
+                    weight_quality = COALESCE($17, weight_quality),
+                    weight_logistics = COALESCE($18, weight_logistics),
+                    weight_esg = COALESCE($19, weight_esg),
                     updated_at = CURRENT_TIMESTAMP
-                 WHERE rfp_id = ?`,
-                [name || null, category || null, currency || null, deadline || null, description || null, rfpId],
+                 WHERE rfp_id = $20`,
+                [name || null, category || null, currency || null, deadline || null, description || null,
+                 buRegion || null, incoterms || null, contactPerson || null, instructions || null,
+                 requireComplianceAck != null ? requireComplianceAck : null,
+                 requireIso != null ? requireIso : null,
+                 requireGmp != null ? requireGmp : null,
+                 requireFsc != null ? requireFsc : null,
+                 minRevenueM != null ? minRevenueM : null,
+                 weightCommercial != null ? parseFloat(weightCommercial) : null,
+                 weightTechnical != null ? parseFloat(weightTechnical) : null,
+                 weightQuality != null ? parseFloat(weightQuality) : null,
+                 weightLogistics != null ? parseFloat(weightLogistics) : null,
+                 weightEsg != null ? parseFloat(weightEsg) : null,
+                 rfpId],
                 function(err) {
                     if (err) return reject(err);
                     db.get(`SELECT * FROM rfp WHERE rfp_id = ?`, [rfpId], (err2, row) => {
@@ -258,19 +306,20 @@ class RFPService {
     // ─────────────────────────────────────────────────────────
 
     static async addItem(rfpId, data) {
-        const { name, description, quantity, unit, specifications } = data;
+        const { name, description, quantity, unit, specifications, targetPrice, targetPriceNote } = data;
         if (!name) throw new Error('item name is required');
         if (!quantity || quantity <= 0) throw new Error('quantity must be greater than 0');
 
         const itemId = randomUUID();
         return new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO rfp_item (item_id, rfp_id, name, description, quantity, unit, specifications, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-                [itemId, rfpId, name, description || null, quantity, unit || null, specifications || null],
+                `INSERT INTO rfp_item (item_id, rfp_id, name, description, quantity, unit, specifications, target_price, target_price_note, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP)`,
+                [itemId, rfpId, name, description || null, quantity, unit || null, specifications || null,
+                 targetPrice || null, targetPriceNote || null],
                 function(err) {
                     if (err) return reject(err);
-                    db.get(`SELECT * FROM rfp_item WHERE item_id = ?`, [itemId], (err2, row) => {
+                    db.get(`SELECT * FROM rfp_item WHERE item_id = $1`, [itemId], (err2, row) => {
                         if (err2) return reject(err2);
                         resolve(RFPService._normalizeItem(row));
                     });
@@ -280,17 +329,20 @@ class RFPService {
     }
 
     static async updateItem(rfpId, itemId, data) {
-        const { name, description, quantity, unit, specifications } = data;
+        const { name, description, quantity, unit, specifications, targetPrice, targetPriceNote } = data;
         return new Promise((resolve, reject) => {
             db.run(
                 `UPDATE rfp_item SET
-                    name = COALESCE(?, name),
-                    description = COALESCE(?, description),
-                    quantity = COALESCE(?, quantity),
-                    unit = COALESCE(?, unit),
-                    specifications = COALESCE(?, specifications)
-                 WHERE item_id = ? AND rfp_id = ?`,
-                [name || null, description || null, quantity || null, unit || null, specifications || null, itemId, rfpId],
+                    name = COALESCE($1, name),
+                    description = COALESCE($2, description),
+                    quantity = COALESCE($3, quantity),
+                    unit = COALESCE($4, unit),
+                    specifications = COALESCE($5, specifications),
+                    target_price = COALESCE($6, target_price),
+                    target_price_note = COALESCE($7, target_price_note)
+                 WHERE item_id = $8 AND rfp_id = $9`,
+                [name || null, description || null, quantity || null, unit || null, specifications || null,
+                 targetPrice || null, targetPriceNote || null, itemId, rfpId],
                 function(err) {
                     if (err) return reject(err);
                     db.get(`SELECT * FROM rfp_item WHERE item_id = ?`, [itemId], (err2, row) => {
@@ -678,7 +730,7 @@ class RFPService {
     }
 
     static async saveResponseDraft(rfpId, supplierId, data) {
-        const { notes, items } = data;
+        const { notes, items, complianceAckAccepted } = data;
 
         // Upsert response header
         let responseId = await new Promise((resolve, reject) => {
@@ -696,17 +748,17 @@ class RFPService {
             responseId = randomUUID();
             await new Promise((resolve, reject) => {
                 db.run(
-                    `INSERT INTO supplier_rfp_response (response_id, rfp_id, supplier_id, status, notes, created_at, updated_at)
-                     VALUES (?, ?, ?, 'DRAFT', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-                    [responseId, rfpId, supplierId, notes || null],
+                    `INSERT INTO supplier_rfp_response (response_id, rfp_id, supplier_id, status, notes, compliance_ack_accepted, created_at, updated_at)
+                     VALUES (?, ?, ?, 'DRAFT', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                    [responseId, rfpId, supplierId, notes || null, complianceAckAccepted ? true : false],
                     (err) => err ? reject(err) : resolve()
                 );
             });
         } else {
             await new Promise((resolve, reject) => {
                 db.run(
-                    `UPDATE supplier_rfp_response SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE response_id = ?`,
-                    [notes || null, responseId],
+                    `UPDATE supplier_rfp_response SET notes = ?, compliance_ack_accepted = ?, updated_at = CURRENT_TIMESTAMP WHERE response_id = ?`,
+                    [notes || null, complianceAckAccepted ? true : false, responseId],
                     (err) => err ? reject(err) : resolve()
                 );
             });
@@ -728,8 +780,15 @@ class RFPService {
             if (existing) {
                 await new Promise((resolve, reject) => {
                     db.run(
-                        `UPDATE rfp_response_item SET price = ?, lead_time = ?, moq = ?, notes = ? WHERE id = ?`,
-                        [item.price || null, item.leadTime || null, item.moq || null, item.notes || null, existing.id],
+                        `UPDATE rfp_response_item
+                         SET price=$1, lead_time=$2, moq=$3, notes=$4,
+                             raw_material_cost=$5, conversion_cost=$6, labor_cost=$7,
+                             logistics_cost=$8, overhead_cost=$9, supplier_margin=$10
+                         WHERE id=$11`,
+                        [item.price || null, item.leadTime || null, item.moq || null, item.notes || null,
+                         item.rawMaterialCost || null, item.conversionCost || null, item.laborCost || null,
+                         item.logisticsCost || null, item.overheadCost || null, item.supplierMargin || null,
+                         existing.id],
                         (err) => err ? reject(err) : resolve()
                     );
                 });
@@ -737,9 +796,13 @@ class RFPService {
                 const id = randomUUID();
                 await new Promise((resolve, reject) => {
                     db.run(
-                        `INSERT INTO rfp_response_item (id, response_id, item_id, price, lead_time, moq, notes)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                        [id, responseId, item.itemId, item.price || null, item.leadTime || null, item.moq || null, item.notes || null],
+                        `INSERT INTO rfp_response_item
+                             (id, response_id, item_id, price, lead_time, moq, notes,
+                              raw_material_cost, conversion_cost, labor_cost, logistics_cost, overhead_cost, supplier_margin)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                        [id, responseId, item.itemId, item.price || null, item.leadTime || null, item.moq || null, item.notes || null,
+                         item.rawMaterialCost || null, item.conversionCost || null, item.laborCost || null,
+                         item.logisticsCost || null, item.overheadCost || null, item.supplierMargin || null],
                         (err) => err ? reject(err) : resolve()
                     );
                 });
@@ -750,6 +813,17 @@ class RFPService {
     }
 
     static async submitResponse(rfpId, supplierId, data) {
+        // Compliance ack gate — enforce if buyer requires it
+        const rfpRow = await new Promise((resolve) => {
+            db.get(`SELECT require_compliance_ack FROM rfp WHERE rfp_id = $1`, [rfpId], (err, row) => resolve(row));
+        });
+        if (rfpRow?.require_compliance_ack) {
+            const ackAccepted = data.complianceAckAccepted === true || data.complianceAckAccepted === 'true';
+            if (!ackAccepted) {
+                throw new Error('You must accept the compliance acknowledgement before submitting this response');
+            }
+        }
+
         const draft = await RFPService.saveResponseDraft(rfpId, supplierId, data);
 
         // Validate at least one item has a price
@@ -1259,6 +1333,23 @@ class RFPService {
             updatedAt: row.updated_at,
             supplierCount: Number(row.supplier_count ?? 0),
             submittedCount: Number(row.submitted_count ?? 0),
+            // Section 1 enhancements
+            buRegion: row.bu_region || null,
+            incoterms: row.incoterms || null,
+            contactPerson: row.contact_person || null,
+            instructions: row.instructions || null,
+            requireComplianceAck: row.require_compliance_ack || false,
+            // Section 2/6 — buyer certification gates
+            requireIso: row.require_iso || false,
+            requireGmp: row.require_gmp || false,
+            requireFsc: row.require_fsc || false,
+            minRevenueM: row.min_revenue_m != null ? Number(row.min_revenue_m) : 0,
+            // Configurable scoring weights
+            weightCommercial: row.weight_commercial != null ? Number(row.weight_commercial) : 40,
+            weightTechnical:  row.weight_technical  != null ? Number(row.weight_technical)  : 25,
+            weightQuality:    row.weight_quality    != null ? Number(row.weight_quality)    : 15,
+            weightLogistics:  row.weight_logistics  != null ? Number(row.weight_logistics)  : 10,
+            weightEsg:        row.weight_esg        != null ? Number(row.weight_esg)        : 10,
         };
     }
 
@@ -1272,8 +1363,695 @@ class RFPService {
             quantity: row.quantity,
             unit: row.unit,
             specifications: row.specifications,
+            targetPrice: row.target_price != null ? Number(row.target_price) : null,
+            targetPriceNote: row.target_price_note || null,
             createdAt: row.created_at,
         };
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 2 — Supplier Qualification
+    // ─────────────────────────────────────────────────────────
+
+    static async saveQualificationResponse(rfpId, supplierId, data) {
+        const {
+            legalEntity, headquarters, annualRevenue, employees,
+            monthlyCapacity, certifications, majorClients, financialNotes
+        } = data;
+
+        // Auto-score: Financial (20%), Capability (40%), Experience (25%), Compliance (15%)
+        const revenue = parseFloat(annualRevenue) || 0;
+        const financialScore = revenue > 50000000 ? 100 : revenue > 10000000 ? 70 : revenue > 1000000 ? 40 : 10;
+
+        const capScore = employees > 500 ? 100 : employees > 100 ? 70 : employees > 20 ? 40 : 10;
+
+        const certs = Array.isArray(certifications) ? certifications : [];
+        const complianceScore = Math.min(100, certs.length * 25);
+
+        const expScore = majorClients ? Math.min(100, majorClients.split(',').length * 20) : 20;
+
+        const totalQualScore = (
+            financialScore * 0.20 +
+            capScore * 0.40 +
+            expScore * 0.25 +
+            complianceScore * 0.15
+        );
+
+        // Risk / auto-disqualification — uses buyer's min_revenue_m field from RFP
+        const rfpRow = await new Promise((r) =>
+            db.get(`SELECT min_revenue_m FROM rfp WHERE rfp_id=$1`, [rfpId], (e, row) => r(row))
+        );
+        const minRevM = rfpRow?.min_revenue_m != null ? Number(rfpRow.min_revenue_m) : 0;
+        // Convert min_revenue_m (millions) to actual value for comparison; fallback 100K absolute minimum
+        const hardMinRevenue = Math.max(100000, minRevM * 1_000_000);
+
+        let isDisqualified = false;
+        const disqualReasons = [];
+        if (revenue > 0 && revenue < hardMinRevenue) {
+            isDisqualified = true;
+            disqualReasons.push(
+                minRevM > 0
+                    ? `Annual revenue below required minimum ($${minRevM}M)`
+                    : `Annual revenue below minimum threshold ($100K)`
+            );
+        }
+        const disqualificationReason = disqualReasons.length > 0 ? disqualReasons.join('; ') : null;
+
+        const certsJson = JSON.stringify(certs);
+
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO rfp_qualification_response
+                    (rfp_id, supplier_id, legal_entity, headquarters, annual_revenue, employees,
+                     monthly_capacity, certifications, major_clients, financial_notes,
+                     financial_score, capability_score, experience_score, compliance_score,
+                     total_qual_score, is_disqualified, disqualification_reason,
+                     created_at, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW())
+                 ON CONFLICT (rfp_id, supplier_id) DO UPDATE SET
+                    legal_entity=$3, headquarters=$4, annual_revenue=$5, employees=$6,
+                    monthly_capacity=$7, certifications=$8, major_clients=$9, financial_notes=$10,
+                    financial_score=$11, capability_score=$12, experience_score=$13, compliance_score=$14,
+                    total_qual_score=$15, is_disqualified=$16, disqualification_reason=$17,
+                    updated_at=NOW()`,
+                [rfpId, supplierId, legalEntity||null, headquarters||null, annualRevenue||null,
+                 employees||null, monthlyCapacity||null, certsJson, majorClients||null, financialNotes||null,
+                 financialScore, capScore, expScore, complianceScore, totalQualScore,
+                 isDisqualified, disqualificationReason],
+                (err) => err ? reject(err) : resolve()
+            );
+        });
+
+        return { totalQualScore: Math.round(totalQualScore), isDisqualified, disqualificationReason };
+    }
+
+    static async getQualificationResponses(rfpId) {
+        return new Promise((resolve, reject) => {
+            db.all(
+                `SELECT q.*, s.legalname AS supplier_name
+                 FROM rfp_qualification_response q
+                 LEFT JOIN suppliers s ON q.supplier_id = s.supplierid
+                 WHERE q.rfp_id = $1 ORDER BY q.total_qual_score DESC`,
+                [rfpId],
+                (err, rows) => {
+                    if (err) return resolve([]);
+                    resolve((rows || []).map(r => ({
+                        supplierId: r.supplier_id,
+                        supplierName: r.supplier_name,
+                        legalEntity: r.legal_entity,
+                        headquarters: r.headquarters,
+                        annualRevenue: r.annual_revenue,
+                        employees: r.employees,
+                        monthlyCapacity: r.monthly_capacity,
+                        certifications: (() => { try { return JSON.parse(r.certifications || '[]'); } catch { return []; } })(),
+                        majorClients: r.major_clients,
+                        financialScore: Number(r.financial_score || 0),
+                        capabilityScore: Number(r.capability_score || 0),
+                        experienceScore: Number(r.experience_score || 0),
+                        complianceScore: Number(r.compliance_score || 0),
+                        totalQualScore: Number(r.total_qual_score || 0),
+                        isDisqualified: r.is_disqualified,
+                        disqualificationReason: r.disqualification_reason,
+                    })));
+                }
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 5 — Logistics & Supply Capability
+    // ─────────────────────────────────────────────────────────
+
+    static async saveLogisticsResponse(rfpId, supplierId, data) {
+        const {
+            deliveryTerms, warehouseLocations, transportMethod,
+            supplyCapacityMonthly, hasBackupSupplier
+        } = data;
+
+        // Risk detection
+        const riskReasons = [];
+        if (!hasBackupSupplier) riskReasons.push('No backup supplier / single source risk');
+        if (!warehouseLocations || warehouseLocations.split(',').length < 2)
+            riskReasons.push('Single warehouse location — geographic concentration risk');
+
+        // Capacity risk: compare supply capacity vs total RFP demand
+        if (supplyCapacityMonthly) {
+            const itemRows = await new Promise((r) =>
+                db.all(`SELECT quantity FROM rfp_item WHERE rfp_id=$1`, [rfpId], (e, rows) => r(rows || []))
+            );
+            const totalDemand = itemRows.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+            const capacity = Number(supplyCapacityMonthly);
+            if (totalDemand > 0 && capacity > 0 && capacity < totalDemand) {
+                const shortfallPct = Math.round(((totalDemand - capacity) / totalDemand) * 100);
+                riskReasons.push(
+                    `Monthly capacity (${capacity.toLocaleString()} units) is ${shortfallPct}% below total RFP demand (${totalDemand.toLocaleString()} units)`
+                );
+            }
+        }
+
+        const riskLevel = riskReasons.length >= 2 ? 'HIGH' : riskReasons.length === 1 ? 'MEDIUM' : 'LOW';
+        const riskJson = JSON.stringify(riskReasons);
+
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO rfp_logistics_response
+                    (rfp_id, supplier_id, delivery_terms, warehouse_locations, transport_method,
+                     supply_capacity_monthly, has_backup_supplier, risk_level, risk_reasons, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+                 ON CONFLICT (rfp_id, supplier_id) DO UPDATE SET
+                    delivery_terms=$3, warehouse_locations=$4, transport_method=$5,
+                    supply_capacity_monthly=$6, has_backup_supplier=$7, risk_level=$8,
+                    risk_reasons=$9, updated_at=NOW()`,
+                [rfpId, supplierId, deliveryTerms||null, warehouseLocations||null,
+                 transportMethod||null, supplyCapacityMonthly||null,
+                 hasBackupSupplier ? true : false, riskLevel, riskJson],
+                (err) => err ? reject(err) : resolve()
+            );
+        });
+
+        return { riskLevel, riskReasons };
+    }
+
+    static async getLogisticsResponses(rfpId) {
+        return new Promise((resolve, reject) => {
+            db.all(
+                `SELECT l.*, s.legalname AS supplier_name
+                 FROM rfp_logistics_response l
+                 LEFT JOIN suppliers s ON l.supplier_id = s.supplierid
+                 WHERE l.rfp_id = $1`,
+                [rfpId],
+                (err, rows) => {
+                    if (err) return resolve([]);
+                    resolve((rows || []).map(r => ({
+                        supplierId: r.supplier_id,
+                        supplierName: r.supplier_name,
+                        deliveryTerms: r.delivery_terms,
+                        warehouseLocations: r.warehouse_locations,
+                        transportMethod: r.transport_method,
+                        supplyCapacityMonthly: r.supply_capacity_monthly,
+                        hasBackupSupplier: r.has_backup_supplier,
+                        riskLevel: r.risk_level,
+                        riskReasons: (() => { try { return JSON.parse(r.risk_reasons || '[]'); } catch { return []; } })(),
+                    })));
+                }
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 6 — Quality & Compliance
+    // ─────────────────────────────────────────────────────────
+
+    static async saveQualityResponse(rfpId, supplierId, data) {
+        const {
+            isoCertified, gmpCertified, fscCertified, otherCertifications,
+            inspectionProcess, traceabilitySystem, defectRatePct,
+            auditReportUrl, qualityManualUrl
+        } = data;
+
+        // Compliance score
+        let score = 0;
+        if (isoCertified) score += 35;
+        if (gmpCertified) score += 30;
+        if (fscCertified) score += 15;
+        if (otherCertifications) score += 10;
+        if (inspectionProcess) score += 5;
+        if (traceabilitySystem) score += 5;
+        score = Math.min(100, score);
+
+        // Auto-compliance check — uses buyer's stated requirements from RFP columns
+        const rfp = await new Promise((r) => db.get(
+            `SELECT category, require_iso, require_gmp, require_fsc FROM rfp WHERE rfp_id=$1`,
+            [rfpId], (e, row) => r(row)
+        ));
+        let isCompliant = true;
+        const disqualReasons = [];
+        const category = (rfp?.category || '').toLowerCase();
+
+        // Category-based auto-check for GMP (Pharma/Food)
+        if ((category.includes('pharma') || category.includes('food')) && !gmpCertified) {
+            isCompliant = false;
+            disqualReasons.push('GMP certification required for Pharma/Food category');
+        }
+        // Buyer's explicit certification requirements
+        if (rfp?.require_iso && !isoCertified) {
+            isCompliant = false;
+            disqualReasons.push('ISO 9001 certification required by buyer');
+        }
+        if (rfp?.require_gmp && !gmpCertified) {
+            isCompliant = false;
+            disqualReasons.push('GMP certification required by buyer');
+        }
+        if (rfp?.require_fsc && !fscCertified) {
+            isCompliant = false;
+            disqualReasons.push('FSC certification required by buyer');
+        }
+        const defectRate = parseFloat(defectRatePct) || 0;
+        if (defectRate > 5) {
+            isCompliant = false;
+            disqualReasons.push('Defect rate exceeds 5% threshold');
+        }
+        const disqualificationReason = disqualReasons.length > 0 ? disqualReasons.join('; ') : null;
+
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO rfp_quality_response
+                    (rfp_id, supplier_id, iso_certified, gmp_certified, fsc_certified,
+                     other_certifications, inspection_process, traceability_system,
+                     defect_rate_pct, audit_report_url, quality_manual_url,
+                     compliance_score, is_compliant, disqualification_reason, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+                 ON CONFLICT (rfp_id, supplier_id) DO UPDATE SET
+                    iso_certified=$3, gmp_certified=$4, fsc_certified=$5,
+                    other_certifications=$6, inspection_process=$7, traceability_system=$8,
+                    defect_rate_pct=$9, audit_report_url=$10, quality_manual_url=$11,
+                    compliance_score=$12, is_compliant=$13, disqualification_reason=$14, updated_at=NOW()`,
+                [rfpId, supplierId,
+                 isoCertified ? true : false, gmpCertified ? true : false, fscCertified ? true : false,
+                 otherCertifications||null, inspectionProcess||null, traceabilitySystem||null,
+                 defectRatePct||null, auditReportUrl||null, qualityManualUrl||null,
+                 score, isCompliant, disqualificationReason],
+                (err) => err ? reject(err) : resolve()
+            );
+        });
+
+        return { complianceScore: score, isCompliant, disqualificationReason };
+    }
+
+    static async getQualityResponses(rfpId) {
+        return new Promise((resolve, reject) => {
+            db.all(
+                `SELECT q.*, s.legalname AS supplier_name
+                 FROM rfp_quality_response q
+                 LEFT JOIN suppliers s ON q.supplier_id = s.supplierid
+                 WHERE q.rfp_id = $1`,
+                [rfpId],
+                (err, rows) => {
+                    if (err) return resolve([]);
+                    resolve((rows || []).map(r => ({
+                        supplierId: r.supplier_id,
+                        supplierName: r.supplier_name,
+                        isoCertified: r.iso_certified,
+                        gmpCertified: r.gmp_certified,
+                        fscCertified: r.fsc_certified,
+                        otherCertifications: r.other_certifications,
+                        inspectionProcess: r.inspection_process,
+                        traceabilitySystem: r.traceability_system,
+                        defectRatePct: r.defect_rate_pct,
+                        complianceScore: Number(r.compliance_score || 0),
+                        isCompliant: r.is_compliant,
+                        disqualificationReason: r.disqualification_reason,
+                    })));
+                }
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 7 — Sustainability & ESG
+    // ─────────────────────────────────────────────────────────
+
+    static async saveESGResponse(rfpId, supplierId, data) {
+        const {
+            recycledContentPct, carbonFootprintKg, renewableEnergyPct,
+            packagingReductionInitiative, esgPolicies
+        } = data;
+
+        // ESG Score: Carbon (40%) + Recycled Content (30%) + Renewable Energy (30%)
+        const carbonScore  = Math.max(0, 100 - Math.min(100, (parseFloat(carbonFootprintKg) || 0) / 10));
+        const recycledScore = Math.min(100, (parseFloat(recycledContentPct) || 0));
+        const renewableScore = Math.min(100, (parseFloat(renewableEnergyPct) || 0));
+        const esgScore = carbonScore * 0.40 + recycledScore * 0.30 + renewableScore * 0.30;
+
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO rfp_esg_response
+                    (rfp_id, supplier_id, recycled_content_pct, carbon_footprint_kg,
+                     renewable_energy_pct, packaging_reduction_initiative, esg_policies, esg_score, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+                 ON CONFLICT (rfp_id, supplier_id) DO UPDATE SET
+                    recycled_content_pct=$3, carbon_footprint_kg=$4, renewable_energy_pct=$5,
+                    packaging_reduction_initiative=$6, esg_policies=$7, esg_score=$8, updated_at=NOW()`,
+                [rfpId, supplierId, recycledContentPct||null, carbonFootprintKg||null,
+                 renewableEnergyPct||null, packagingReductionInitiative||null, esgPolicies||null,
+                 Math.round(esgScore)],
+                (err) => err ? reject(err) : resolve()
+            );
+        });
+
+        return { esgScore: Math.round(esgScore) };
+    }
+
+    static async getESGResponses(rfpId) {
+        return new Promise((resolve, reject) => {
+            db.all(
+                `SELECT e.*, s.legalname AS supplier_name
+                 FROM rfp_esg_response e
+                 LEFT JOIN suppliers s ON e.supplier_id = s.supplierid
+                 WHERE e.rfp_id = $1`,
+                [rfpId],
+                (err, rows) => {
+                    if (err) return resolve([]);
+                    resolve((rows || []).map(r => ({
+                        supplierId: r.supplier_id,
+                        supplierName: r.supplier_name,
+                        recycledContentPct: r.recycled_content_pct,
+                        carbonFootprintKg: r.carbon_footprint_kg,
+                        renewableEnergyPct: r.renewable_energy_pct,
+                        packagingReductionInitiative: r.packaging_reduction_initiative,
+                        esgPolicies: r.esg_policies,
+                        esgScore: Number(r.esg_score || 0),
+                    })));
+                }
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 8 — Commercial Terms & Conditions
+    // ─────────────────────────────────────────────────────────
+
+    static async saveTermsResponse(rfpId, supplierId, data) {
+        const {
+            paymentTerms, priceValidityDays, acceptsPenaltyClauses,
+            commodityIndexLinkage, generalTermsAccepted, termsNotes
+        } = data;
+
+        // Smart contract flags
+        const flagReasons = [];
+        if (!generalTermsAccepted) flagReasons.push('General terms & conditions not accepted');
+        if (!acceptsPenaltyClauses) flagReasons.push('Penalty clauses not accepted');
+        if (!commodityIndexLinkage) flagReasons.push('No commodity index linkage specified');
+        const priceVal = parseInt(priceValidityDays) || 0;
+        if (priceVal < 30) flagReasons.push('Price validity below 30 days — too short');
+
+        const hasFlags = flagReasons.length > 0;
+
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO rfp_terms_response
+                    (rfp_id, supplier_id, payment_terms, price_validity_days, accepts_penalty_clauses,
+                     commodity_index_linkage, general_terms_accepted, terms_notes, has_flags, flag_reasons, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+                 ON CONFLICT (rfp_id, supplier_id) DO UPDATE SET
+                    payment_terms=$3, price_validity_days=$4, accepts_penalty_clauses=$5,
+                    commodity_index_linkage=$6, general_terms_accepted=$7, terms_notes=$8,
+                    has_flags=$9, flag_reasons=$10, updated_at=NOW()`,
+                [rfpId, supplierId, paymentTerms||null, priceValidityDays||null,
+                 acceptsPenaltyClauses ? true : false, commodityIndexLinkage||null,
+                 generalTermsAccepted ? true : false, termsNotes||null,
+                 hasFlags, JSON.stringify(flagReasons)],
+                (err) => err ? reject(err) : resolve()
+            );
+        });
+
+        return { hasFlags, flagReasons };
+    }
+
+    static async getTermsResponses(rfpId) {
+        return new Promise((resolve, reject) => {
+            db.all(
+                `SELECT t.*, s.legalname AS supplier_name
+                 FROM rfp_terms_response t
+                 LEFT JOIN suppliers s ON t.supplier_id = s.supplierid
+                 WHERE t.rfp_id = $1`,
+                [rfpId],
+                (err, rows) => {
+                    if (err) return resolve([]);
+                    resolve((rows || []).map(r => ({
+                        supplierId: r.supplier_id,
+                        supplierName: r.supplier_name,
+                        paymentTerms: r.payment_terms,
+                        priceValidityDays: r.price_validity_days,
+                        acceptsPenaltyClauses: r.accepts_penalty_clauses,
+                        commodityIndexLinkage: r.commodity_index_linkage,
+                        generalTermsAccepted: r.general_terms_accepted,
+                        termsNotes: r.terms_notes,
+                        hasFlags: r.has_flags,
+                        flagReasons: (() => { try { return JSON.parse(r.flag_reasons || '[]'); } catch { return []; } })(),
+                    })));
+                }
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // WEIGHTED EVALUATION SCORING
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Compute weighted evaluation score for all suppliers on an RFP.
+     * Weights: Commercial 40%, Technical/Qual 25%, Quality 15%, Logistics 10%, Sustainability 10%
+     */
+    static async calculateWeightedScores(rfpId) {
+        // Load rfp's configured scoring weights
+        const rfpWeights = await new Promise((r) =>
+            db.get(
+                `SELECT weight_commercial, weight_technical, weight_quality, weight_logistics, weight_esg FROM rfp WHERE rfp_id=$1`,
+                [rfpId], (e, row) => r(row)
+            )
+        );
+        // Use configured weights (as decimal fractions), fall back to 40/25/15/10/10
+        const wC = (rfpWeights?.weight_commercial != null ? Number(rfpWeights.weight_commercial) : 40) / 100;
+        const wT = (rfpWeights?.weight_technical  != null ? Number(rfpWeights.weight_technical)  : 25) / 100;
+        const wQ = (rfpWeights?.weight_quality    != null ? Number(rfpWeights.weight_quality)    : 15) / 100;
+        const wL = (rfpWeights?.weight_logistics  != null ? Number(rfpWeights.weight_logistics)  : 10) / 100;
+        const wE = (rfpWeights?.weight_esg        != null ? Number(rfpWeights.weight_esg)        : 10) / 100;
+
+        // Load all submitted responses
+        const responses = await new Promise((resolve) => {
+            db.all(
+                `SELECT r.*, s.legalname AS supplier_name
+                 FROM supplier_rfp_response r
+                 LEFT JOIN suppliers s ON r.supplier_id = s.supplierid
+                 WHERE r.rfp_id = $1 AND r.status = 'SUBMITTED'`,
+                [rfpId],
+                (err, rows) => resolve(rows || [])
+            );
+        });
+        if (!responses.length) return [];
+
+        // Load rfp items for should-cost comparison
+        const items = await new Promise((resolve) => {
+            db.all(`SELECT * FROM rfp_item WHERE rfp_id = $1`, [rfpId], (err, rows) => resolve(rows || []));
+        });
+
+        // Helper: load response items for a supplier response
+        const getResponseItems = (responseId) => new Promise((resolve) => {
+            db.all(`SELECT * FROM rfp_response_item WHERE response_id = $1`, [responseId], (err, rows) => resolve(rows || []));
+        });
+
+        // Calculate commercial score (price vs lowest)
+        const supplierPriceTotals = {};
+        for (const resp of responses) {
+            const ritems = await getResponseItems(resp.response_id);
+            let total = 0;
+            for (const ri of ritems) {
+                if (ri.price) {
+                    const item = items.find(i => i.item_id === ri.item_id);
+                    total += parseFloat(ri.price) * (item ? parseFloat(item.quantity) : 1);
+                }
+            }
+            supplierPriceTotals[resp.supplier_id] = total;
+        }
+        const prices = Object.values(supplierPriceTotals).filter(p => p > 0);
+        const lowestTotal = prices.length ? Math.min(...prices) : 1;
+
+        // Load section scores
+        const [qualRows, logisticsRows, qualityRows, esgRows] = await Promise.all([
+            new Promise(r => db.all(`SELECT supplier_id, total_qual_score FROM rfp_qualification_response WHERE rfp_id=$1`, [rfpId], (e, rows) => r(rows || []))),
+            new Promise(r => db.all(`SELECT supplier_id, risk_level FROM rfp_logistics_response WHERE rfp_id=$1`, [rfpId], (e, rows) => r(rows || []))),
+            new Promise(r => db.all(`SELECT supplier_id, compliance_score FROM rfp_quality_response WHERE rfp_id=$1`, [rfpId], (e, rows) => r(rows || []))),
+            new Promise(r => db.all(`SELECT supplier_id, esg_score FROM rfp_esg_response WHERE rfp_id=$1`, [rfpId], (e, rows) => r(rows || []))),
+        ]);
+
+        const qualMap = Object.fromEntries(qualRows.map(r => [r.supplier_id, Number(r.total_qual_score || 0)]));
+        const logisticsMap = Object.fromEntries(logisticsRows.map(r => [r.supplier_id, r.risk_level === 'LOW' ? 100 : r.risk_level === 'MEDIUM' ? 60 : 20]));
+        const qualityMap = Object.fromEntries(qualityRows.map(r => [r.supplier_id, Number(r.compliance_score || 0)]));
+        const esgMap = Object.fromEntries(esgRows.map(r => [r.supplier_id, Number(r.esg_score || 0)]));
+
+        const scores = [];
+        for (const resp of responses) {
+            const sid = resp.supplier_id;
+            const totalPrice = supplierPriceTotals[sid] || 0;
+
+            // Commercial: lowest price = 100, others scaled proportionally
+            const commercialScore = totalPrice > 0 && lowestTotal > 0
+                ? Math.round((lowestTotal / totalPrice) * 100)
+                : 50;
+
+            const technicalScore = qualMap[sid] || 50;    // fallback 50 if not filled
+            const qualityScore   = qualityMap[sid] || 50;
+            const logisticsScore = logisticsMap[sid] || 50;
+            const sustainScore   = esgMap[sid] || 50;
+
+            const totalWeighted = (
+                commercialScore   * wC +
+                technicalScore    * wT +
+                qualityScore      * wQ +
+                logisticsScore    * wL +
+                sustainScore      * wE
+            );
+
+            scores.push({
+                supplierId: sid,
+                supplierName: resp.supplier_name,
+                commercialScore,
+                technicalScore,
+                qualityScore,
+                logisticsScore,
+                sustainabilityScore: sustainScore,
+                totalWeightedScore: Math.round(totalWeighted),
+            });
+        }
+
+        // Rank by total score descending
+        scores.sort((a, b) => b.totalWeightedScore - a.totalWeightedScore);
+        scores.forEach((s, i) => { s.rank = i + 1; });
+
+        // Upsert to rfp_eval_score
+        for (const s of scores) {
+            await new Promise((resolve) => {
+                db.run(
+                    `INSERT INTO rfp_eval_score
+                        (rfp_id, supplier_id, commercial_score, technical_score, quality_score,
+                         logistics_score, sustainability_score, total_weighted_score, rank, updated_at)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+                     ON CONFLICT (rfp_id, supplier_id) DO UPDATE SET
+                        commercial_score=$3, technical_score=$4, quality_score=$5,
+                        logistics_score=$6, sustainability_score=$7, total_weighted_score=$8,
+                        rank=$9, updated_at=NOW()`,
+                    [rfpId, s.supplierId, s.commercialScore, s.technicalScore, s.qualityScore,
+                     s.logisticsScore, s.sustainabilityScore, s.totalWeightedScore, s.rank],
+                    () => resolve()
+                );
+            });
+        }
+
+        return scores;
+    }
+
+    static async getEvalScores(rfpId) {
+        return new Promise((resolve) => {
+            db.all(
+                `SELECT e.*, s.legalname AS supplier_name
+                 FROM rfp_eval_score e
+                 LEFT JOIN suppliers s ON e.supplier_id = s.supplierid
+                 WHERE e.rfp_id = $1 ORDER BY e.rank ASC`,
+                [rfpId],
+                (err, rows) => {
+                    if (err) return resolve([]);
+                    resolve((rows || []).map(r => ({
+                        supplierId: r.supplier_id,
+                        supplierName: r.supplier_name || `Supplier ${r.supplier_id}`,
+                        commercialScore: Number(r.commercial_score || 0),
+                        technicalScore: Number(r.technical_score || 0),
+                        qualityScore: Number(r.quality_score || 0),
+                        logisticsScore: Number(r.logistics_score || 0),
+                        sustainabilityScore: Number(r.sustainability_score || 0),
+                        totalWeightedScore: Number(r.total_weighted_score || 0),
+                        rank: r.rank,
+                    })));
+                }
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 4 — Cost Breakdown + Should-Cost for a supplier
+    // ─────────────────────────────────────────────────────────
+
+    static async getShouldCostAnalysis(rfpId) {
+        // Load rfp items with target prices
+        const items = await new Promise((resolve) => {
+            db.all(`SELECT * FROM rfp_item WHERE rfp_id = $1`, [rfpId], (err, rows) => resolve(rows || []));
+        });
+
+        // Load all submitted responses with their items
+        const responses = await new Promise((resolve) => {
+            db.all(
+                `SELECT r.*, s.legalname AS supplier_name
+                 FROM supplier_rfp_response r
+                 LEFT JOIN suppliers s ON r.supplier_id = s.supplierid
+                 WHERE r.rfp_id = $1 AND r.status = 'SUBMITTED'`,
+                [rfpId], (err, rows) => resolve(rows || [])
+            );
+        });
+
+        const analysis = [];
+        for (const item of items) {
+            const row = {
+                itemId: item.item_id,
+                itemName: item.name,
+                targetPrice: item.target_price ? Number(item.target_price) : null,
+                suppliers: [],
+            };
+
+            for (const resp of responses) {
+                const ri = await new Promise((resolve) => {
+                    db.get(
+                        `SELECT * FROM rfp_response_item WHERE response_id = $1 AND item_id = $2`,
+                        [resp.response_id, item.item_id],
+                        (err, r) => resolve(r)
+                    );
+                });
+                if (!ri) continue;
+
+                const price = ri.price ? Number(ri.price) : null;
+                const variance = (price !== null && item.target_price)
+                    ? Math.round(((price - Number(item.target_price)) / Number(item.target_price)) * 100)
+                    : null;
+
+                const rawMat = ri.raw_material_cost ? Number(ri.raw_material_cost) : null;
+                const conv   = ri.conversion_cost   ? Number(ri.conversion_cost)   : null;
+                const labor  = ri.labor_cost        ? Number(ri.labor_cost)        : null;
+                const logist = ri.logistics_cost    ? Number(ri.logistics_cost)    : null;
+                const ovhd   = ri.overhead_cost     ? Number(ri.overhead_cost)     : null;
+                const margin = ri.supplier_margin   ? Number(ri.supplier_margin)   : null;
+
+                row.suppliers.push({
+                    supplierId: resp.supplier_id,
+                    supplierName: resp.supplier_name,
+                    price,
+                    rawMaterialCost: rawMat,
+                    conversionCost: conv,
+                    laborCost: labor,
+                    logisticsCost: logist,
+                    overheadCost: ovhd,
+                    supplierMargin: margin,
+                    variancePct: variance,
+                    isBelowTarget: variance !== null && variance < 0,
+                    isAboveTarget: variance !== null && variance > 0,
+                });
+            }
+
+            // Cost-component auto-flagging — compare each component across suppliers for this item
+            const flags = [];
+            const suppliersWithBreakdown = row.suppliers.filter(s => s.rawMaterialCost !== null);
+            if (suppliersWithBreakdown.length >= 2) {
+                const avgRaw    = suppliersWithBreakdown.reduce((s, x) => s + x.rawMaterialCost, 0) / suppliersWithBreakdown.length;
+                const avgConv   = suppliersWithBreakdown.filter(s => s.conversionCost !== null).reduce((s, x) => s + x.conversionCost, 0) / (suppliersWithBreakdown.filter(s => s.conversionCost !== null).length || 1);
+                const avgMargin = suppliersWithBreakdown.filter(s => s.supplierMargin !== null).reduce((s, x) => s + x.supplierMargin, 0) / (suppliersWithBreakdown.filter(s => s.supplierMargin !== null).length || 1);
+
+                for (const s of suppliersWithBreakdown) {
+                    const sFlags = [];
+                    if (avgRaw > 0 && s.rawMaterialCost > avgRaw * 1.2)
+                        sFlags.push(`High raw material cost (${Math.round(((s.rawMaterialCost - avgRaw) / avgRaw) * 100)}% above average)`);
+                    if (s.conversionCost !== null && avgConv > 0 && s.conversionCost > avgConv * 1.25)
+                        sFlags.push(`Inflated conversion cost (${Math.round(((s.conversionCost - avgConv) / avgConv) * 100)}% above average)`);
+                    if (s.supplierMargin !== null && s.supplierMargin > 30)
+                        sFlags.push(`High supplier margin (${s.supplierMargin}%)`);
+                    if (s.supplierMargin !== null && avgMargin > 0 && s.supplierMargin > avgMargin * 1.5)
+                        sFlags.push('Margin significantly above peer average — possible hidden cost');
+                    if (sFlags.length > 0) flags.push({ supplierId: s.supplierId, supplierName: s.supplierName, flags: sFlags });
+                }
+            }
+            row.costFlags = flags;
+
+            analysis.push(row);
+        }
+
+        return analysis;
     }
 }
 

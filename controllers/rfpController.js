@@ -308,6 +308,111 @@ class RFPController {
             res.status(500).json({ error: err.message });
         }
     }
+
+    // ── Section responses (supplier-side) ────────────────────
+
+    static async saveQualification(req, res) {
+        try {
+            const supplierId = req.user.supplierId;
+            if (!supplierId) return res.status(403).json({ error: 'Supplier context required' });
+            const result = await RFPService.saveQualificationResponse(req.params.id, supplierId, req.body);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async saveLogistics(req, res) {
+        try {
+            const supplierId = req.user.supplierId;
+            if (!supplierId) return res.status(403).json({ error: 'Supplier context required' });
+            const result = await RFPService.saveLogisticsResponse(req.params.id, supplierId, req.body);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async saveQuality(req, res) {
+        try {
+            const supplierId = req.user.supplierId;
+            if (!supplierId) return res.status(403).json({ error: 'Supplier context required' });
+            const result = await RFPService.saveQualityResponse(req.params.id, supplierId, req.body);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async saveESG(req, res) {
+        try {
+            const supplierId = req.user.supplierId;
+            if (!supplierId) return res.status(403).json({ error: 'Supplier context required' });
+            const result = await RFPService.saveESGResponse(req.params.id, supplierId, req.body);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async saveTerms(req, res) {
+        try {
+            const supplierId = req.user.supplierId;
+            if (!supplierId) return res.status(403).json({ error: 'Supplier context required' });
+            const result = await RFPService.saveTermsResponse(req.params.id, supplierId, req.body);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    // ── Buyer section views ───────────────────────────────────
+
+    static async getQualificationData(req, res) {
+        try {
+            const result = await RFPService.getQualificationResponses(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async getLogisticsData(req, res) {
+        try {
+            const result = await RFPService.getLogisticsResponses(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async getQualityData(req, res) {
+        try {
+            const result = await RFPService.getQualityResponses(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async getESGData(req, res) {
+        try {
+            const result = await RFPService.getESGResponses(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async getTermsData(req, res) {
+        try {
+            const result = await RFPService.getTermsResponses(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async getScores(req, res) {
+        try {
+            const result = await RFPService.getEvalScores(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async recalculateScores(req, res) {
+        try {
+            const result = await RFPService.calculateWeightedScores(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
+
+    static async getShouldCost(req, res) {
+        try {
+            const result = await RFPService.getShouldCostAnalysis(req.params.id);
+            res.json(result);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    }
 }
 
 module.exports = RFPController;

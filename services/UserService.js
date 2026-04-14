@@ -11,7 +11,7 @@ class UserService {
             let countQuery = "SELECT COUNT(*) as count FROM users";
             const params = [];
 
-            const whereClauses = [];
+            const whereClauses = ["(is_deleted = false OR is_deleted IS NULL)"];
             if (filters.role) {
                 whereClauses.push("role = ?");
                 params.push(filters.role);
@@ -50,7 +50,7 @@ class UserService {
 
     static async getAdmins() {
         return new Promise((resolve, reject) => {
-            db.all("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\" FROM users WHERE role = 'ADMIN'", [], (err, rows) => {
+            db.all("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\" FROM users WHERE role = 'ADMIN' AND (is_deleted = false OR is_deleted IS NULL)", [], (err, rows) => {
                 if (err) return reject(err);
                 resolve(rows);
             });
@@ -59,7 +59,7 @@ class UserService {
 
     static async getUserById(userId) {
         return new Promise((resolve, reject) => {
-            db.get("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", isActive as \"isActive\", phone, \"firstName\", \"lastName\" FROM users WHERE userId = ?", [userId], (err, row) => {
+            db.get("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", isActive as \"isActive\", phone, \"firstName\", \"lastName\" FROM users WHERE userId = ? AND (is_deleted = false OR is_deleted IS NULL)", [userId], (err, row) => {
                 if (err) return reject(err);
                 resolve(row);
             });
@@ -79,7 +79,7 @@ class UserService {
                     c.circleName as "circleName" 
                 FROM users u
                 LEFT JOIN circles c ON u.circleId = c.circleId
-                WHERE u.buyerId = ? AND u.role = 'BUYER'
+                WHERE u.buyerId = ? AND u.role = 'BUYER' AND (u.is_deleted = false OR u.is_deleted IS NULL)
             `;
             db.all(query, [buyerId], (err, rows) => {
                 if (err) return reject(err);
@@ -203,11 +203,20 @@ class UserService {
         });
     }
 
-    static async deleteUser(userId) {
+    static async deleteUser(userId, performedByUserId) {
         return new Promise((resolve, reject) => {
-            db.run("DELETE FROM users WHERE userId = ?", [userId], (err) => {
+            db.run("UPDATE users SET is_deleted = true, deleted_at = CURRENT_TIMESTAMP WHERE userId = ?", [userId], function(err) {
                 if (err) return reject(err);
-                resolve();
+                
+                // Record Audit Log
+                const auditDetails = JSON.stringify({ userId, action: 'SOFT_DELETE' });
+                db.run("INSERT INTO user_audit_logs (userId, action, performedByUserId, details) VALUES (?, ?, ?, ?)",
+                    [userId, 'DELETE', performedByUserId, auditDetails],
+                    (auditErr) => {
+                        if (auditErr) console.warn("[UserService.deleteUser] Audit logging failed:", auditErr.message);
+                        resolve();
+                    }
+                );
             });
         });
     }

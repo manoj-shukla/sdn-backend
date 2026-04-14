@@ -369,7 +369,9 @@ class PostgresWrapper {
                     supplierId INTEGER,
                     circleId INTEGER,
                     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    mustChangePassword BOOLEAN DEFAULT FALSE
+                    mustChangePassword BOOLEAN DEFAULT FALSE,
+                    is_deleted BOOLEAN DEFAULT FALSE,
+                    deleted_at TIMESTAMP
                 );
 
                 CREATE TABLE IF NOT EXISTS suppliers (
@@ -721,6 +723,8 @@ class PostgresWrapper {
                 ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS submissionType TEXT DEFAULT 'INITIAL';
                 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS score INTEGER DEFAULT 0;
                 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS riskLevel TEXT DEFAULT 'Low';
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
             `;
             await new Promise((resolve) => {
                 this.run(migrationSql, [], (err) => {
@@ -768,6 +772,15 @@ class PostgresWrapper {
                     performedByUserId INTEGER,
                     performedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     userRole TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS user_audit_logs (
+                    auditId SERIAL PRIMARY KEY,
+                    userId INTEGER NOT NULL,
+                    action TEXT NOT NULL,
+                    performedByUserId INTEGER,
+                    performedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    details TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS field_change_classification (
@@ -1284,7 +1297,7 @@ class PostgresWrapper {
 
             // RFI + RFP column migrations — safe for existing DBs (ADD COLUMN IF NOT EXISTS is idempotent)
             const columnMigrations = [
-                // rfp table
+                // rfp table — base columns
                 `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS source_rfi_id UUID`,
                 `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS created_by INTEGER`,
                 // rfi_event table — start_date was added later
@@ -1294,6 +1307,41 @@ class PostgresWrapper {
                 `ALTER TABLE supplier_rfi_response ADD COLUMN IF NOT EXISTS completion_percent NUMERIC DEFAULT 0`,
                 // rfi_invitation — supplier_id might not exist on very old schemas
                 `ALTER TABLE rfi_invitation ADD COLUMN IF NOT EXISTS supplier_id INTEGER`,
+
+                // ── RFP Section 1 enhancements ──────────────────────────────────────
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS bu_region TEXT`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS incoterms TEXT`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS contact_person TEXT`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS instructions TEXT`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS require_compliance_ack BOOLEAN DEFAULT FALSE`,
+
+                // ── RFP Section 2/6 — buyer certification gates ──────────────────────
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS require_iso BOOLEAN DEFAULT FALSE`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS require_gmp BOOLEAN DEFAULT FALSE`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS require_fsc BOOLEAN DEFAULT FALSE`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS min_revenue_m NUMERIC DEFAULT 0`,
+
+                // ── RFP configurable scoring weights ────────────────────────────────
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS weight_commercial NUMERIC DEFAULT 40`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS weight_technical  NUMERIC DEFAULT 25`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS weight_quality    NUMERIC DEFAULT 15`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS weight_logistics  NUMERIC DEFAULT 10`,
+                `ALTER TABLE rfp ADD COLUMN IF NOT EXISTS weight_esg        NUMERIC DEFAULT 10`,
+
+                // ── RFP item — should-cost target price ─────────────────────────────
+                `ALTER TABLE rfp_item ADD COLUMN IF NOT EXISTS target_price NUMERIC`,
+                `ALTER TABLE rfp_item ADD COLUMN IF NOT EXISTS target_price_note TEXT`,
+
+                // ── RFP response item — cost breakdown ──────────────────────────────
+                `ALTER TABLE rfp_response_item ADD COLUMN IF NOT EXISTS raw_material_cost NUMERIC`,
+                `ALTER TABLE rfp_response_item ADD COLUMN IF NOT EXISTS conversion_cost   NUMERIC`,
+                `ALTER TABLE rfp_response_item ADD COLUMN IF NOT EXISTS labor_cost        NUMERIC`,
+                `ALTER TABLE rfp_response_item ADD COLUMN IF NOT EXISTS logistics_cost    NUMERIC`,
+                `ALTER TABLE rfp_response_item ADD COLUMN IF NOT EXISTS overhead_cost     NUMERIC`,
+                `ALTER TABLE rfp_response_item ADD COLUMN IF NOT EXISTS supplier_margin   NUMERIC`,
+
+                // ── Supplier response — compliance ack ──────────────────────────────
+                `ALTER TABLE supplier_rfp_response ADD COLUMN IF NOT EXISTS compliance_ack_accepted BOOLEAN DEFAULT FALSE`,
             ];
             for (const sql of columnMigrations) {
                 await new Promise((resolve) => {
@@ -1306,6 +1354,94 @@ class PostgresWrapper {
                 });
             }
             console.log("RFI/RFP column migrations applied.");
+
+            // ── RFP Section response tables ──────────────────────────────────────────
+            const rfpSectionTablesSql = `
+                CREATE TABLE IF NOT EXISTS rfp_qualification_response (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    legal_entity TEXT, headquarters TEXT, annual_revenue NUMERIC, employees INTEGER,
+                    monthly_capacity TEXT, certifications JSONB DEFAULT '[]',
+                    major_clients TEXT, financial_notes TEXT,
+                    financial_score NUMERIC DEFAULT 0, capability_score NUMERIC DEFAULT 0,
+                    experience_score NUMERIC DEFAULT 0, compliance_score NUMERIC DEFAULT 0,
+                    total_qual_score NUMERIC DEFAULT 0,
+                    is_disqualified BOOLEAN DEFAULT FALSE, disqualification_reason TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id)
+                );
+                CREATE TABLE IF NOT EXISTS rfp_logistics_response (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    delivery_terms TEXT, warehouse_locations TEXT, transport_method TEXT,
+                    supply_capacity_monthly NUMERIC, has_backup_supplier BOOLEAN DEFAULT FALSE,
+                    risk_level TEXT DEFAULT 'LOW' CHECK(risk_level IN ('LOW','MEDIUM','HIGH')),
+                    risk_reasons JSONB DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id)
+                );
+                CREATE TABLE IF NOT EXISTS rfp_quality_response (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    iso_certified BOOLEAN DEFAULT FALSE, gmp_certified BOOLEAN DEFAULT FALSE,
+                    fsc_certified BOOLEAN DEFAULT FALSE, other_certifications TEXT,
+                    inspection_process TEXT, traceability_system TEXT,
+                    defect_rate_pct NUMERIC, audit_report_url TEXT, quality_manual_url TEXT,
+                    compliance_score NUMERIC DEFAULT 0, is_compliant BOOLEAN DEFAULT TRUE,
+                    disqualification_reason TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id)
+                );
+                CREATE TABLE IF NOT EXISTS rfp_esg_response (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    recycled_content_pct NUMERIC, carbon_footprint_kg NUMERIC,
+                    renewable_energy_pct NUMERIC, packaging_reduction_initiative TEXT,
+                    esg_policies TEXT, esg_score NUMERIC DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id)
+                );
+                CREATE TABLE IF NOT EXISTS rfp_terms_response (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    payment_terms TEXT, price_validity_days INTEGER,
+                    accepts_penalty_clauses BOOLEAN DEFAULT FALSE,
+                    commodity_index_linkage TEXT, general_terms_accepted BOOLEAN DEFAULT FALSE,
+                    terms_notes TEXT, has_flags BOOLEAN DEFAULT FALSE,
+                    flag_reasons JSONB DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id)
+                );
+                CREATE TABLE IF NOT EXISTS rfp_eval_score (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    rfp_id UUID NOT NULL REFERENCES rfp(rfp_id) ON DELETE CASCADE,
+                    supplier_id INTEGER NOT NULL,
+                    commercial_score NUMERIC DEFAULT 0, technical_score NUMERIC DEFAULT 0,
+                    quality_score NUMERIC DEFAULT 0, logistics_score NUMERIC DEFAULT 0,
+                    sustainability_score NUMERIC DEFAULT 0, total_weighted_score NUMERIC DEFAULT 0,
+                    rank INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfp_id, supplier_id)
+                );
+            `;
+            await new Promise((resolve) => {
+                this.run(rfpSectionTablesSql, [], (err) => {
+                    if (err) console.warn('[DB Migration] RFP section tables warning:', err.message);
+                    else console.log('RFP section tables ensured.');
+                    resolve();
+                });
+            });
 
             // UNIQUE index migrations — ensures ON CONFLICT clauses work and prevents duplicates
             const indexMigrations = [

@@ -177,22 +177,45 @@ class RFIEventService {
         });
     }
 
-    static async getSupplierInvitations(supplierId) {
+    static async getSupplierInvitations(supplierId, userEmail) {
+        // Fetch invitations matched by supplierId (directory invite)
+        // OR by guest_email (email invite) so that email-invited suppliers see their RFIs.
         return new Promise((resolve, reject) => {
             db.all(
-                `SELECT i.invitation_id, i.rfi_id, i.supplier_id, i.invitation_status, i.sent_timestamp,
+                `SELECT i.invitation_id, i.rfi_id, i.supplier_id, i.guest_email,
+                        i.invitation_status, i.sent_timestamp,
                         e.title as rfi_title, e.deadline,
                         b.buyername as buyer_name,
                         r.status as response_status
                  FROM rfi_invitation i
                  JOIN rfi_event e ON i.rfi_id = e.rfi_id
                  LEFT JOIN buyers b ON e.buyer_id = b.buyerid
-                 LEFT JOIN supplier_rfi_response r ON r.rfi_id = i.rfi_id AND r.supplier_id = i.supplier_id
-                 WHERE i.supplier_id = ?
-                 ORDER BY i.sent_timestamp DESC`,
-                [supplierId],
-                (err, rows) => {
+                 LEFT JOIN supplier_rfi_response r
+                        ON r.rfi_id = i.rfi_id
+                       AND (r.supplier_id = i.supplier_id OR r.supplier_id = $1)
+                 WHERE i.supplier_id = $1
+                    OR (i.guest_email IS NOT NULL AND LOWER(i.guest_email) = LOWER($2))
+                 ORDER BY i.sent_timestamp DESC NULLS LAST, i.invitation_id DESC`,
+                [supplierId, userEmail || ''],
+                async (err, rows) => {
                     if (err) return reject(err);
+
+                    // Back-fill supplier_id on any email-matched rows that don't have it yet.
+                    // This makes future queries (by supplier_id) work correctly.
+                    if (supplierId && userEmail) {
+                        const emailMatches = (rows || []).filter(
+                            r => !r.supplier_id && r.guest_email &&
+                                 r.guest_email.toLowerCase() === userEmail.toLowerCase()
+                        );
+                        for (const row of emailMatches) {
+                            db.run(
+                                `UPDATE rfi_invitation SET supplier_id = $1 WHERE invitation_id = $2 AND supplier_id IS NULL`,
+                                [supplierId, row.invitation_id],
+                                () => {} // non-blocking back-fill
+                            );
+                        }
+                    }
+
                     resolve((rows || []).map(row => ({
                         invitationId: row.invitation_id,
                         rfiId: row.rfi_id,

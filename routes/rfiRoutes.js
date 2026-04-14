@@ -44,7 +44,7 @@ router.delete('/questions/:id', authenticateToken, requireAdmin, RFIQuestionLibr
 // RFI EVENTS — /api/rfi/events
 // ============================================================
 
-router.post('/events', authenticateToken, requireAdmin, RFIEventController.createEvent);
+router.post('/events', authenticateToken, requireRole('BUYER'), RFIEventController.createEvent);
 router.post('/events/import', authenticateToken, requireAdmin, RFIEventController.importEvents);
 router.get('/events', authenticateToken, requireRole('BUYER'), RFIEventController.listEvents);
 router.get('/events/active-count', authenticateToken, requireRole('BUYER'), RFIEventController.getActiveCount);
@@ -55,9 +55,9 @@ router.post('/events/:id/close', authenticateToken, requireRole('BUYER'), RFIEve
 router.post('/events/:id/convert-to-rfp', authenticateToken, requireRole('BUYER'), RFIEventController.convertToRFP);
 
 // Invitations
-router.post('/events/:id/invitations', authenticateToken, requireAdmin, RFIEventController.addInvitations);
+router.post('/events/:id/invitations', authenticateToken, requireRole('BUYER'), RFIEventController.addInvitations);
 router.get('/events/:id/invitations', authenticateToken, requireRole('BUYER'), RFIEventController.listInvitations);
-router.post('/events/:id/invitations/validate', authenticateToken, requireAdmin, RFIEventController.validateEligibility);
+router.post('/events/:id/invitations/validate', authenticateToken, requireRole('BUYER'), RFIEventController.validateEligibility);
 
 // Supplier's own invitation inbox
 router.get('/invitations', authenticateToken, requireRole('SUPPLIER'), RFIEventController.getSupplierInvitations);

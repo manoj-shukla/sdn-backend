@@ -49,6 +49,29 @@ router.post('/:id/response/submit', authenticateToken, requireRole('SUPPLIER'), 
 router.post('/:id/invitation/respond', authenticateToken, requireRole('SUPPLIER'), RFPController.respondToInvitation);
 
 // ============================================================
+// SUPPLIER SECTION RESPONSES (S2, S5, S6, S7, S8)
+// ============================================================
+
+router.post('/:id/response/qualification', authenticateToken, requireRole('SUPPLIER'), RFPController.saveQualification);
+router.post('/:id/response/logistics',     authenticateToken, requireRole('SUPPLIER'), RFPController.saveLogistics);
+router.post('/:id/response/quality',       authenticateToken, requireRole('SUPPLIER'), RFPController.saveQuality);
+router.post('/:id/response/esg',           authenticateToken, requireRole('SUPPLIER'), RFPController.saveESG);
+router.post('/:id/response/terms',         authenticateToken, requireRole('SUPPLIER'), RFPController.saveTerms);
+
+// ============================================================
+// BUYER — SECTION DATA VIEWS
+// ============================================================
+
+router.get('/:id/sections/qualification', authenticateToken, requireRole('BUYER'), RFPController.getQualificationData);
+router.get('/:id/sections/logistics',     authenticateToken, requireRole('BUYER'), RFPController.getLogisticsData);
+router.get('/:id/sections/quality',       authenticateToken, requireRole('BUYER'), RFPController.getQualityData);
+router.get('/:id/sections/esg',           authenticateToken, requireRole('BUYER'), RFPController.getESGData);
+router.get('/:id/sections/terms',         authenticateToken, requireRole('BUYER'), RFPController.getTermsData);
+router.get('/:id/scores',                 authenticateToken, requireRole('BUYER'), RFPController.getScores);
+router.post('/:id/scores/recalculate',    authenticateToken, requireRole('BUYER'), RFPController.recalculateScores);
+router.get('/:id/should-cost',            authenticateToken, requireRole('BUYER'), RFPController.getShouldCost);
+
+// ============================================================
 // COMPARISON & INSIGHTS
 // ============================================================
 

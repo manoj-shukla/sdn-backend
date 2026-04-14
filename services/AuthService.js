@@ -13,7 +13,7 @@ class AuthService {
                     FROM users u 
                     LEFT JOIN buyers b ON u.buyerid = b.buyerid 
                     LEFT JOIN suppliers s ON u.supplierid = s.supplierid
-                    WHERE u.username = ? OR u.email = ?
+                    WHERE (u.username = ? OR u.email = ?) AND (u.is_deleted = false OR u.is_deleted IS NULL)
                 `, [username, username], async (err, user) => {
                     try {
                         if (err) {
@@ -46,6 +46,7 @@ class AuthService {
                         const tokenData = {
                             userId: user.userid || user.userId,
                             username: user.username,
+                            email: user.email || null,
                             role: user.role,
                             supplierId: user.supplierid || user.supplierId,
                             buyerId: user.buyerid || user.buyerId,
@@ -103,7 +104,7 @@ class AuthService {
                 FROM users u
                 LEFT JOIN buyers b ON u.buyerid = b.buyerid 
                 LEFT JOIN suppliers s ON u.supplierid = s.supplierid
-                WHERE u.userid = ?
+                WHERE u.userid = ? AND (u.is_deleted = false OR u.is_deleted IS NULL)
             `, [userId], async (err, row) => {
                 if (err) return reject(err);
                 if (!row) return reject(new Error("User not found"));
@@ -266,7 +267,7 @@ class AuthService {
                 FROM users u 
                 LEFT JOIN buyers b ON u.buyerid = b.buyerid 
                 LEFT JOIN suppliers s ON u.supplierid = s.supplierid
-                WHERE u.userid = ?
+                WHERE u.userid = ? AND (u.is_deleted = false OR u.is_deleted IS NULL)
             `, [userId], async (err, user) => {
                 if (err) return reject(err);
                 if (!user) return reject(new Error('User not found'));
