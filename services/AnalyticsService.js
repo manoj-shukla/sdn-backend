@@ -384,6 +384,8 @@ class AnalyticsService {
     }
 
     static async getAdminSummary() {
+        // NOTE: cache is intentionally short-lived — cleared on each server start.
+        // Do not cache across deploys as schema/data can change.
         if (this.cache.adminSummary) {
             return this.cache.adminSummary;
         }
@@ -406,9 +408,9 @@ class AnalyticsService {
                 });
                 summary.totalUsers = parseInt(totalUsers);
 
-                // 2. Total Buyers
+                // 2. Total Buyer Organisations (from the buyers table, not buyer users)
                 const totalBuyers = await new Promise((res, rej) => {
-                    db.get("SELECT COUNT(*) as count FROM users WHERE role = 'BUYER'", [], (err, row) => err ? rej(err) : res(row?.count || 0));
+                    db.get("SELECT COUNT(*) as count FROM buyers WHERE isActive = TRUE", [], (err, row) => err ? rej(err) : res(row?.count || 0));
                 });
                 summary.totalBuyers = parseInt(totalBuyers);
 
@@ -570,7 +572,13 @@ class AnalyticsService {
                     }
                 });
 
-                resolve(stats);
+                // Compute a complianceRate percentage that the dashboard can display directly
+                const total = stats.VERIFIED + stats.PENDING + stats.REJECTED + stats.EXPIRED;
+                const complianceRate = total > 0
+                    ? `${Math.round((stats.VERIFIED / total) * 100)}%`
+                    : '0%';
+
+                resolve({ ...stats, complianceRate });
             });
         });
     }

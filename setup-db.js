@@ -120,12 +120,15 @@ async function setup() {
         console.log('\nSeeding admin user...');
         const hash = await bcrypt.hash('Admin123!', 10);
         await client.query(`
-            INSERT INTO users (username, password, email, role, subrole)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO users (username, password, email, role, subrole, isactive, is_deleted)
+            VALUES ($1, $2, $3, $4, $5, TRUE, FALSE)
             ON CONFLICT (username) DO UPDATE
                 SET password = EXCLUDED.password,
                     role = EXCLUDED.role,
-                    email = EXCLUDED.email
+                    email = EXCLUDED.email,
+                    subrole = EXCLUDED.subrole,
+                    isactive = TRUE,
+                    is_deleted = FALSE
         `, ['admin', hash, 'admin@sdn.tech', 'ADMIN', 'Super Admin']);
         console.log('  ✅ Admin user: admin@sdn.tech / Admin123!');
 

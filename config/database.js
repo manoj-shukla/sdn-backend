@@ -335,9 +335,15 @@ class PostgresWrapper {
                 try {
                     const hashedPassword = await bcrypt.hash("Admin123!", SALT_ROUNDS);
                     this.run(`
-                        INSERT INTO users (username, password, email, role, subrole) 
-                        VALUES ($1, $2, $3, $4, $5)
-                        ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, role = EXCLUDED.role, email = EXCLUDED.email
+                        INSERT INTO users (username, password, email, role, subrole, isactive, is_deleted)
+                        VALUES ($1, $2, $3, $4, $5, TRUE, FALSE)
+                        ON CONFLICT (username) DO UPDATE SET
+                            password = EXCLUDED.password,
+                            role = EXCLUDED.role,
+                            email = EXCLUDED.email,
+                            subrole = EXCLUDED.subrole,
+                            isactive = TRUE,
+                            is_deleted = FALSE
                     `,
                         [adminUsername, hashedPassword, adminEmail, "ADMIN", "Super Admin"],
                         (err) => {

@@ -63,10 +63,10 @@ class ChangeRequestController {
             }
 
             const query = `
-                SELECT 
-                    r.requestId as "requestId", 
-                    r.supplierId as "supplierId", 
-                    r.requestedAt as "requestedAt", 
+                SELECT
+                    r.requestId as "requestId",
+                    r.supplierId as "supplierId",
+                    r.requestedAt as "requestedAt",
                     r.status as "status",
                     s.legalName as "supplierName",
                     s.website,
@@ -90,19 +90,27 @@ class ChangeRequestController {
                 ORDER BY r.requestedAt DESC
             `;
 
-            db.all(query, [buyerId], async (err, rows) => {
-                if (err) return res.status(500).json({ error: err.message });
+            // Await the DB query so async errors are caught by the outer try/catch
+            const rows = await new Promise((resolve, reject) => {
+                db.all(query, [buyerId], (err, rows) => {
+                    if (err) {
+                        console.error(`[ChangeRequestController.getPendingRequests] DB query error for buyerId=${buyerId}:`, err.message);
+                        return reject(err);
+                    }
+                    resolve(rows);
+                });
+            });
 
-                const supplierIds = [...new Set(rows.map(r => r.supplierId || r.supplierid))].filter(Boolean);
+            const supplierIds = [...new Set(rows.map(r => r.supplierId || r.supplierid))].filter(Boolean);
 
-                // Batch fetch related data
-                let addresses = [], contacts = [], documents = [];
-                if (supplierIds.length > 0) {
-                    const placeholders = supplierIds.map(() => '?').join(',');
-                    addresses = await new Promise(res => db.all(`SELECT * FROM addresses WHERE supplierId IN (${placeholders})`, supplierIds, (e, r) => res(r || [])));
-                    contacts = await new Promise(res => db.all(`SELECT * FROM contacts WHERE supplierId IN (${placeholders})`, supplierIds, (e, r) => res(r || [])));
-                    documents = await new Promise(res => db.all(`SELECT * FROM documents WHERE supplierId IN (${placeholders})`, supplierIds, (e, r) => res(r || [])));
-                }
+            // Batch fetch related data
+            let addresses = [], contacts = [], documents = [];
+            if (supplierIds.length > 0) {
+                const placeholders = supplierIds.map(() => '?').join(',');
+                addresses = await new Promise(resolveInner => db.all(`SELECT * FROM addresses WHERE supplierId IN (${placeholders})`, supplierIds, (e, r) => resolveInner(r || [])));
+                contacts = await new Promise(resolveInner => db.all(`SELECT * FROM contacts WHERE supplierId IN (${placeholders})`, supplierIds, (e, r) => resolveInner(r || [])));
+                documents = await new Promise(resolveInner => db.all(`SELECT * FROM documents WHERE supplierId IN (${placeholders})`, supplierIds, (e, r) => resolveInner(r || [])));
+            }
 
                 // Group by SUPPLIER ID to Consolidated View
                 const suppliersMap = {};
@@ -318,10 +326,10 @@ class ChangeRequestController {
                     };
                 }).filter(Boolean); // Remove nulls
 
-                res.json(response);
-            });
+            res.json(response);
         } catch (e) {
-            res.status(500).json({ error: e.message });
+            console.error('[ChangeRequestController.getPendingRequests] Error:', e.message, e.stack);
+            if (!res.headersSent) res.status(500).json({ error: e.message });
         }
     }
 
