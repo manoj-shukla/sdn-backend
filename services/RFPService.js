@@ -305,18 +305,29 @@ class RFPService {
     // LINE ITEMS
     // ─────────────────────────────────────────────────────────
 
+    static async ensureSpecAttributesColumn() {
+        return new Promise((resolve) => {
+            db.run(`ALTER TABLE rfp_item ADD COLUMN spec_attributes TEXT`, [], (err) => {
+                // Ignore error — column already exists is fine
+                resolve();
+            });
+        });
+    }
+
     static async addItem(rfpId, data) {
-        const { name, description, quantity, unit, specifications, targetPrice, targetPriceNote } = data;
+        const { name, description, quantity, unit, specifications, specAttributes, targetPrice, targetPriceNote } = data;
         if (!name) throw new Error('item name is required');
         if (!quantity || quantity <= 0) throw new Error('quantity must be greater than 0');
 
+        await RFPService.ensureSpecAttributesColumn();
+        const specAttrsJson = specAttributes ? JSON.stringify(specAttributes) : null;
         const itemId = randomUUID();
         return new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO rfp_item (item_id, rfp_id, name, description, quantity, unit, specifications, target_price, target_price_note, created_at)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP)`,
+                `INSERT INTO rfp_item (item_id, rfp_id, name, description, quantity, unit, specifications, spec_attributes, target_price, target_price_note, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP)`,
                 [itemId, rfpId, name, description || null, quantity, unit || null, specifications || null,
-                 targetPrice || null, targetPriceNote || null],
+                 specAttrsJson, targetPrice || null, targetPriceNote || null],
                 function(err) {
                     if (err) return reject(err);
                     db.get(`SELECT * FROM rfp_item WHERE item_id = $1`, [itemId], (err2, row) => {
@@ -329,7 +340,9 @@ class RFPService {
     }
 
     static async updateItem(rfpId, itemId, data) {
-        const { name, description, quantity, unit, specifications, targetPrice, targetPriceNote } = data;
+        const { name, description, quantity, unit, specifications, specAttributes, targetPrice, targetPriceNote } = data;
+        await RFPService.ensureSpecAttributesColumn();
+        const specAttrsJson = specAttributes !== undefined ? (specAttributes ? JSON.stringify(specAttributes) : null) : undefined;
         return new Promise((resolve, reject) => {
             db.run(
                 `UPDATE rfp_item SET
@@ -338,11 +351,12 @@ class RFPService {
                     quantity = COALESCE($3, quantity),
                     unit = COALESCE($4, unit),
                     specifications = COALESCE($5, specifications),
-                    target_price = COALESCE($6, target_price),
-                    target_price_note = COALESCE($7, target_price_note)
-                 WHERE item_id = $8 AND rfp_id = $9`,
+                    spec_attributes = COALESCE($6, spec_attributes),
+                    target_price = COALESCE($7, target_price),
+                    target_price_note = COALESCE($8, target_price_note)
+                 WHERE item_id = $9 AND rfp_id = $10`,
                 [name || null, description || null, quantity || null, unit || null, specifications || null,
-                 targetPrice || null, targetPriceNote || null, itemId, rfpId],
+                 specAttrsJson !== undefined ? specAttrsJson : null, targetPrice || null, targetPriceNote || null, itemId, rfpId],
                 function(err) {
                     if (err) return reject(err);
                     db.get(`SELECT * FROM rfp_item WHERE item_id = ?`, [itemId], (err2, row) => {
@@ -1355,6 +1369,11 @@ class RFPService {
 
     static _normalizeItem(row) {
         if (!row) return null;
+        let specAttributes = null;
+        if (row.spec_attributes) {
+            try { specAttributes = typeof row.spec_attributes === 'string' ? JSON.parse(row.spec_attributes) : row.spec_attributes; }
+            catch { specAttributes = null; }
+        }
         return {
             itemId: row.item_id,
             rfpId: row.rfp_id,
@@ -1363,6 +1382,7 @@ class RFPService {
             quantity: row.quantity,
             unit: row.unit,
             specifications: row.specifications,
+            specAttributes,
             targetPrice: row.target_price != null ? Number(row.target_price) : null,
             targetPriceNote: row.target_price_note || null,
             createdAt: row.created_at,

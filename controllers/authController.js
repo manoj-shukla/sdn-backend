@@ -22,17 +22,21 @@ class AuthController {
         try {
             const user = await AuthService.getMe(req.user.userId);
 
-            // Apply multi-tenant context overrides if X-Supplier-Id was passed and verified
-            if (req.user.supplierId && user.memberships && Array.isArray(user.memberships)) {
-                const active = user.memberships.find(m =>
-                    parseInt(m.supplierId || m.supplierid) === parseInt(req.user.supplierId)
-                );
-                if (active) {
-                    user.supplierId = parseInt(active.supplierId || active.supplierid);
-                    user.buyerId = parseInt(active.buyerId || active.buyerid);
-                    user.supplierName = active.supplierName || active.suppliername;
-                    user.approvalStatus = active.approvalStatus || active.approvalstatus;
-                }
+            if (user.memberships && Array.isArray(user.memberships) && user.memberships.length > 0) {
+                // Determine which membership is "active":
+                //   1. If X-Supplier-Id header was sent (and verified by middleware), match it.
+                //   2. Otherwise match the supplierId stored in the JWT (req.user.supplierId).
+                //   3. Fall back to the first membership — this handles the case where
+                //      users.supplierid is NULL or stale (e.g. re-invited suppliers).
+                const requestedId = req.user.supplierId ? parseInt(req.user.supplierId) : null;
+                const active = (requestedId
+                    ? user.memberships.find(m => parseInt(m.supplierId || m.supplierid) === requestedId)
+                    : null) || user.memberships[0];
+
+                user.supplierId = parseInt(active.supplierId || active.supplierid);
+                user.buyerId = parseInt(active.buyerId || active.buyerid);
+                user.supplierName = active.supplierName || active.suppliername;
+                user.approvalStatus = active.approvalStatus || active.approvalstatus;
             }
 
             res.json(user);

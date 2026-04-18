@@ -167,9 +167,10 @@ class SupplierService {
                         }
                     } else if (user.role === 'BUYER' && user.buyerId) {
                         // Buyer users can only access their suppliers
-                        const supplierBuyerId = s.buyerId;
-                        if (supplierBuyerId !== user.buyerId) {
-                            console.warn(`[SupplierService] Access Denied: Buyer User ${user.userId} (Buyer: ${user.buyerId}) tried to access Supplier ${id} (Buyer: ${supplierBuyerId})`);
+                        const supplierBuyerId = parseInt(s.buyerId);
+                        const userBuyerId = parseInt(user.buyerId);
+                        if (supplierBuyerId !== userBuyerId) {
+                            console.warn(`[SupplierService] Access Denied: Buyer User ${user.userId} (Buyer: ${userBuyerId}) tried to access Supplier ${id} (Buyer: ${supplierBuyerId})`);
                             return resolve(null); // Return null to simulate 404
                         }
                     }
