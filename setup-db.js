@@ -26,7 +26,7 @@ async function setup() {
 
         // Each statement run individually to avoid multi-statement issues
         const statements = [
-            `CREATE TABLE IF NOT EXISTS users (
+            `CREATE TABLE IF NOT EXISTS sdn_users (
                 userId SERIAL PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 password TEXT NOT NULL,
@@ -120,7 +120,7 @@ async function setup() {
         console.log('\nSeeding admin user...');
         const hash = await bcrypt.hash('Admin123!', 10);
         await client.query(`
-            INSERT INTO users (username, password, email, role, subrole, isactive, is_deleted)
+            INSERT INTO sdn_users (username, password, email, role, subrole, isactive, is_deleted)
             VALUES ($1, $2, $3, $4, $5, TRUE, FALSE)
             ON CONFLICT (username) DO UPDATE
                 SET password = EXCLUDED.password,

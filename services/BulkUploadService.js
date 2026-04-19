@@ -176,7 +176,7 @@ class BulkUploadService {
             try {
                 // Check if user already exists
                 const existing = await new Promise((res, rej) => {
-                    db.get('SELECT userId FROM users WHERE email = $1 OR username = $2', [email, email], (err, row) => {
+                    db.get('SELECT userId FROM sdn_users WHERE email = $1 OR username = $2', [email, email], (err, row) => {
                         if (err) return rej(err);
                         res(row);
                     });
@@ -185,7 +185,7 @@ class BulkUploadService {
                 if (existing) {
                     // Link existing user to this supplier if not already linked
                     const uid = existing.userid || existing.userId;
-                    db.run('UPDATE users SET supplierId = $1 WHERE userId = $2', [supplierId, uid], (err) => {
+                    db.run('UPDATE sdn_users SET supplierId = $1 WHERE userId = $2', [supplierId, uid], (err) => {
                         if (err) return reject(err);
                         resolve(existing);
                     });
@@ -193,7 +193,7 @@ class BulkUploadService {
                 }
 
                 const hashedPassword = await bcrypt.hash(tempPassword, 10);
-                const sql = `INSERT INTO users (username, password, email, role, supplierId, mustChangePassword)
+                const sql = `INSERT INTO sdn_users (username, password, email, role, supplierId, mustChangePassword)
                     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`;
 
                 db.get(sql, [email, hashedPassword, email, 'SUPPLIER', supplierId, true], (err, result) => {

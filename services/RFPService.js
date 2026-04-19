@@ -407,10 +407,10 @@ class RFPService {
                 const sid = parseInt(supplierId, 10);
                 if (isNaN(sid)) throw new Error(`Invalid supplierId: ${supplierId}`);
 
-                // suppliers table has no email — get it from users table
+                // suppliers table has no email — get it from sdn_users table
                 const userRow = await new Promise((resolve, reject) => {
                     db.get(
-                        `SELECT u.email, s.legalname FROM users u
+                        `SELECT u.email, s.legalname FROM sdn_users u
                          JOIN suppliers s ON s.supplierid = u.supplierid
                          WHERE u.supplierid = ? AND u.role = 'SUPPLIER'
                          LIMIT 1`,
@@ -484,7 +484,7 @@ class RFPService {
                         u.email as user_email
                  FROM rfp_supplier rs
                  LEFT JOIN suppliers s ON rs.supplier_id = s.supplierid
-                 LEFT JOIN users u ON u.supplierid = rs.supplier_id AND u.role = 'SUPPLIER'
+                 LEFT JOIN sdn_users u ON u.supplierid = rs.supplier_id AND u.role = 'SUPPLIER'
                  WHERE rs.rfp_id = ?
                  ORDER BY rs.created_at ASC`,
                 [rfpId],

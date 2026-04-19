@@ -84,7 +84,7 @@ describe('Bulk Operations Tests', () => {
             // Create buyer admin user
             const passwordHash = await require('bcryptjs').hash('BuyerAdmin123!', 10);
             const userResult = await query(
-                `INSERT INTO users (username, password, email, role, buyerId, subRole)
+                `INSERT INTO sdn_users (username, password, email, role, buyerId, subRole)
                  VALUES ($1, $2, $3, $4, $5, $6) RETURNING userId`,
                 [testUsername, passwordHash, `${testEmail}@example.com`, 'BUYER', buyerId, 'Buyer Admin']
             );
@@ -125,10 +125,10 @@ describe('Bulk Operations Tests', () => {
             if (fs.existsSync(testFilePath)) {
                 fs.unlinkSync(testFilePath);
             }
-            await query('DELETE FROM users WHERE username IN ($1, $2, $3, $4, $5)', ['bulkuser1', 'bulkuser2', 'bulkuser3', 'bulkuser4', 'bulkuser5']);
+            await query('DELETE FROM sdn_users WHERE username IN ($1, $2, $3, $4, $5)', ['bulkuser1', 'bulkuser2', 'bulkuser3', 'bulkuser4', 'bulkuser5']);
             await query('DELETE FROM suppliers WHERE legalName LIKE $1', [`Bulk Supplier%`]);
             await query('DELETE FROM invitations WHERE buyerId = $1', [buyerId]);
-            await query('DELETE FROM users WHERE username = $1', [testUsername]);
+            await query('DELETE FROM sdn_users WHERE username = $1', [testUsername]);
             await query('DELETE FROM buyers WHERE buyerName = $1', [testBuyerName]);
             log('CLEANUP', 'Test data deleted');
         } catch (err) {
@@ -487,7 +487,7 @@ describe('Bulk Operations Tests', () => {
             expect(response.data.created).toBe(3);
 
             // Verify users were created
-            const createdUsers = await query('SELECT * FROM users WHERE username IN ($1, $2, $3)', ['bulkuser1', 'bulkuser2', 'bulkuser3']
+            const createdUsers = await query('SELECT * FROM sdn_users WHERE username IN ($1, $2, $3)', ['bulkuser1', 'bulkuser2', 'bulkuser3']
             );
 
             expect(createdUsers.rows.length).toBe(3);
@@ -533,7 +533,7 @@ describe('Bulk Operations Tests', () => {
             expect(response.status).toBe(200);
 
             // Verify passwords are hashed (not plain text)
-            const createdUsers = await query('SELECT password FROM users WHERE username IN ($1, $2, $3)', ['hashuser1', 'hashuser2', 'hashuser3']
+            const createdUsers = await query('SELECT password FROM sdn_users WHERE username IN ($1, $2, $3)', ['hashuser1', 'hashuser2', 'hashuser3']
             );
 
             createdUsers.rows.forEach(user => {
@@ -547,7 +547,7 @@ describe('Bulk Operations Tests', () => {
             log('BULK_USERS', 'Passwords hashed correctly');
 
             // Cleanup
-            await query('DELETE FROM users WHERE username IN ($1, $2, $3)', ['hashuser1', 'hashuser2', 'hashuser3']);
+            await query('DELETE FROM sdn_users WHERE username IN ($1, $2, $3)', ['hashuser1', 'hashuser2', 'hashuser3']);
         });
     });
 });

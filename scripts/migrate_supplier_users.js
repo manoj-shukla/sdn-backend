@@ -26,7 +26,7 @@ async function run() {
             `SELECT s.supplierid, s.legalname, s.buyerid
              FROM suppliers s
              WHERE NOT EXISTS (
-                 SELECT 1 FROM users u WHERE u.supplierid = s.supplierid
+                 SELECT 1 FROM sdn_users u WHERE u.supplierid = s.supplierid
              )
              ORDER BY s.supplierid ASC`,
             [],
@@ -63,7 +63,7 @@ async function run() {
         // Check if user with this email already exists (might just be unlinked)
         const existingUser = await new Promise((resolve, reject) => {
             db.get(
-                `SELECT userid, supplierid FROM users WHERE email = ? OR username = ?`,
+                `SELECT userid, supplierid FROM sdn_users WHERE email = ? OR username = ?`,
                 [email, username],
                 (err, row) => {
                     if (err) return reject(err);
@@ -77,7 +77,7 @@ async function run() {
                 // Link existing user to supplier
                 await new Promise((resolve, reject) => {
                     db.run(
-                        `UPDATE users SET supplierid = ?, role = 'SUPPLIER', buyerid = ?
+                        `UPDATE sdn_users SET supplierid = ?, role = 'SUPPLIER', buyerid = ?
                          WHERE userid = ?`,
                         [sid, supplier.buyerid || null, existingUser.userid],
                         (err) => err ? reject(err) : resolve()
@@ -96,7 +96,7 @@ async function run() {
 
         await new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO users (username, email, password, role, supplierid, buyerid, mustchangepassword)
+                `INSERT INTO sdn_users (username, email, password, role, supplierid, buyerid, mustchangepassword)
                  VALUES (?, ?, ?, 'SUPPLIER', ?, ?, TRUE)`,
                 [username, email, hashed, sid, supplier.buyerid || null],
                 (err) => err ? reject(err) : resolve()
@@ -116,7 +116,7 @@ async function run() {
     const unlinkedUsers = await new Promise((resolve, reject) => {
         db.all(
             `SELECT u.userid, u.username, u.email
-             FROM users u
+             FROM sdn_users u
              WHERE u.role = 'SUPPLIER' AND u.supplierid IS NULL
              ORDER BY u.userid ASC`,
             [],
@@ -149,7 +149,7 @@ async function run() {
         if (inv?.supplierid) {
             await new Promise((resolve, reject) => {
                 db.run(
-                    `UPDATE users SET supplierid = ? WHERE userid = ?`,
+                    `UPDATE sdn_users SET supplierid = ? WHERE userid = ?`,
                     [inv.supplierid, user.userid],
                     (err) => err ? reject(err) : resolve()
                 );
@@ -168,9 +168,9 @@ async function run() {
         db.get(
             `SELECT
                 (SELECT COUNT(*) FROM suppliers) AS total_suppliers,
-                (SELECT COUNT(*) FROM users WHERE role = 'SUPPLIER') AS total_supplier_users,
-                (SELECT COUNT(*) FROM users WHERE role = 'SUPPLIER' AND supplierid IS NOT NULL) AS linked_users,
-                (SELECT COUNT(*) FROM suppliers s WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.supplierid = s.supplierid)) AS still_orphaned`,
+                (SELECT COUNT(*) FROM sdn_users WHERE role = 'SUPPLIER') AS total_supplier_users,
+                (SELECT COUNT(*) FROM sdn_users WHERE role = 'SUPPLIER' AND supplierid IS NOT NULL) AS linked_users,
+                (SELECT COUNT(*) FROM suppliers s WHERE NOT EXISTS (SELECT 1 FROM sdn_users u WHERE u.supplierid = s.supplierid)) AS still_orphaned`,
             [],
             (err, row) => {
                 if (err) return reject(err);

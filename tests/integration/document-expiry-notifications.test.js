@@ -87,13 +87,13 @@ describe('Document Expiry & Notifications', () => {
 
             const passwordHash = await require('bcryptjs').hash('SupplierUser123!', 10);
             const userResult = await query(
-                'INSERT INTO users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
+                'INSERT INTO sdn_users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
                 [supplierUsername, passwordHash, `docsupplier_${ts}@example.com`, 'SUPPLIER', supplierId]
             );
             supplierUserId = userResult.rows[0].userid || userResult.rows[0].userId;
 
             // Create buyer user
-            const buyerUserResult = await query(`INSERT INTO users (username, password, email, role, buyerId)
+            const buyerUserResult = await query(`INSERT INTO sdn_users (username, password, email, role, buyerId)
                  VALUES($1, $2, $3, $4, $5) RETURNING userId`, [buyerUsername, passwordHash, `docbuyer_${ts}@example.com`, 'BUYER', buyerId]
             );
             buyerUserId = buyerUserResult.rows[0].userid || buyerUserResult.rows[0].userId;
@@ -114,7 +114,7 @@ describe('Document Expiry & Notifications', () => {
         try {
             if (supplierId) await query('DELETE FROM documents WHERE supplierId = $1', [supplierId]);
             if (supplierId) await query('DELETE FROM notifications WHERE entityId = $1', [supplierId]);
-            if (supplierUserId || buyerUserId) await query('DELETE FROM users WHERE userId IN ($1, $2)', [supplierUserId, buyerUserId]);
+            if (supplierUserId || buyerUserId) await query('DELETE FROM sdn_users WHERE userId IN ($1, $2)', [supplierUserId, buyerUserId]);
             if (supplierId) await query('DELETE FROM suppliers WHERE supplierId = $1', [supplierId]);
             if (buyerId) await query('DELETE FROM buyers WHERE buyerName = $1', ['Document Test Buyer']);
             log('CLEANUP', 'Test data deleted');

@@ -111,13 +111,13 @@ describe('Many-to-Many Relationship: Buyer ↔ Supplier ↔ User', () => {
             const passwordHash = await require('bcryptjs').hash('SupplierUser123!', 10);
 
             const userResult1 = await query(
-                'INSERT INTO users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
+                'INSERT INTO sdn_users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
                 [testUsername1, passwordHash, testEmail1, 'SUPPLIER', supplier1Id]
             );
             supplierUserId1 = userResult1.rows[0].userid;
 
             const userResult2 = await query(
-                'INSERT INTO users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
+                'INSERT INTO sdn_users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
                 [testUsername2, passwordHash, testEmail2, 'SUPPLIER', supplier2Id]
             );
             supplierUserId2 = userResult2.rows[0].userid;
@@ -137,7 +137,7 @@ describe('Many-to-Many Relationship: Buyer ↔ Supplier ↔ User', () => {
     afterAll(async () => {
         try {
             await run('DELETE FROM user_supplier_memberships WHERE userId IN ($1, $2)', [supplierUserId1, supplierUserId2]);
-            await run('DELETE FROM users WHERE userId IN ($1, $2)', [supplierUserId1, supplierUserId2]);
+            await run('DELETE FROM sdn_users WHERE userId IN ($1, $2)', [supplierUserId1, supplierUserId2]);
             await run('DELETE FROM suppliers WHERE supplierId IN ($1, $2)', [supplier1Id, supplier2Id]);
             await run('DELETE FROM buyers WHERE buyerName LIKE $1', [`Test Buyer Co%`]);
             log('CLEANUP', 'Test data deleted');
@@ -148,7 +148,7 @@ describe('Many-to-Many Relationship: Buyer ↔ Supplier ↔ User', () => {
 
     describe('User → Supplier Membership', () => {
         test('should allow user to be associated with only one supplier', async () => {
-            const user = await query('SELECT * FROM users WHERE username = $1', [testUsername1]);
+            const user = await query('SELECT * FROM sdn_users WHERE username = $1', [testUsername1]);
             expect(user.rows.length).toBe(1);
             expect(user.rows[0].supplierid).toBe(supplier1Id);
         });
@@ -162,14 +162,14 @@ describe('Many-to-Many Relationship: Buyer ↔ Supplier ↔ User', () => {
         });
 
         test('should retrieve all users for a supplier', async () => {
-            const users = await query(`SELECT u.*, m.isActive FROM users u
+            const users = await query(`SELECT u.*, m.isActive FROM sdn_users u
                  LEFT JOIN user_supplier_memberships m ON u.userId = m.userId
                  WHERE u.supplierId = $1`, [supplier1Id]
             );
 
-            expect(users.rows.length).toBeGreaterThan(0);
-            expect(users.rows[0].supplierid).toBe(supplier1Id);
-            log('SUPPLIER_USERS', 'Retrieved for supplier', { count: users.rows.length });
+            expect(sdn_users.rows.length).toBeGreaterThan(0);
+            expect(sdn_users.rows[0].supplierid).toBe(supplier1Id);
+            log('SUPPLIER_USERS', 'Retrieved for supplier', { count: sdn_users.rows.length });
         });
     });
 
@@ -229,7 +229,7 @@ describe('Many-to-Many Relationship: Buyer ↔ Supplier ↔ User', () => {
 
     describe('API Response: Memberships', () => {
         test('GET /auth/me returns user memberships', async () => {
-            const supplierUser = await query('SELECT * FROM users WHERE userId = $1', [supplierUserId1]);
+            const supplierUser = await query('SELECT * FROM sdn_users WHERE userId = $1', [supplierUserId1]);
             const token = generateToken(supplierUser.rows[0]);
 
             const response = await axios.get(`${BASE_URL}/auth/me`, {
@@ -246,7 +246,7 @@ describe('Many-to-Many Relationship: Buyer ↔ Supplier ↔ User', () => {
             await run('INSERT INTO user_supplier_memberships (userId, supplierId, isActive) VALUES ($1, $2, TRUE) ON CONFLICT (userId, supplierId) DO UPDATE SET isActive = TRUE', [supplierUserId1, supplier1Id]
             );
 
-            const supplierUser = await query('SELECT * FROM users WHERE userId = $1', [supplierUserId1]);
+            const supplierUser = await query('SELECT * FROM sdn_users WHERE userId = $1', [supplierUserId1]);
             const token = generateToken(supplierUser.rows[0]);
 
             const response = await axios.get(`${BASE_URL}/auth/me`, {

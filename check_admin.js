@@ -1,6 +1,6 @@
 const db = require('./config/database');
 
-db.get("SELECT username, password, role FROM users WHERE username ILIKE 'admin' OR email ILIKE 'admin@sdn.tech'", [], (err, row) => {
+db.get("SELECT username, password, role FROM sdn_users WHERE username ILIKE 'admin' OR email ILIKE 'admin@sdn.tech'", [], (err, row) => {
     if (err) {
         console.error("Error fetching admin:", err);
     } else {

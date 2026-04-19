@@ -4,7 +4,7 @@ const AuthService = require('./services/AuthService');
 
 async function testMe() {
     try {
-        db.get("SELECT email FROM users WHERE role = 'SUPPLIER' ORDER BY createdat DESC LIMIT 1", [], async (err, row) => {
+        db.get("SELECT email FROM sdn_users WHERE role = 'SUPPLIER' ORDER BY createdat DESC LIMIT 1", [], async (err, row) => {
             if (err) {
                 console.error("DB Error:", err);
                 process.exit(1);

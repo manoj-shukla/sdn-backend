@@ -12,7 +12,7 @@ const pool = new Pool({
 
 async function checkAdmin() {
     try {
-        const res = await pool.query("SELECT userid, username, email FROM users WHERE username = 'admin'");
+        const res = await pool.query("SELECT userid, username, email FROM sdn_users WHERE username = 'admin'");
         console.log("Admin User:", res.rows[0]);
     } catch (err) {
         console.error("Error:", err);

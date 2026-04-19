@@ -216,11 +216,39 @@ class RFIResponseService {
             });
         });
 
+        // Compute completion percentage for this submission (same logic as getProgress)
+        let completionPercent = 100;
+        try {
+            const totalRow = await new Promise((res, rej) => {
+                db.get(
+                    `SELECT COUNT(*) as cnt FROM template_question WHERE template_id = ?`,
+                    [event.template_id],
+                    (err, row) => { if (err) rej(err); else res(row); }
+                );
+            });
+            const total = Number(totalRow?.cnt || 0);
+            if (total > 0) {
+                const answeredRow = await new Promise((res, rej) => {
+                    db.get(
+                        `SELECT COUNT(*) as cnt FROM supplier_rfi_response_detail
+                         WHERE response_id = ? AND answer_value IS NOT NULL AND answer_value != ''`,
+                        [response.response_id],
+                        (err, row) => { if (err) rej(err); else res(row); }
+                    );
+                });
+                const answered = Number(answeredRow?.cnt || 0);
+                completionPercent = Math.round((answered / total) * 100);
+            }
+        } catch (compErr) {
+            console.warn('[RFIResponseService] Failed to compute completion_percent:', compErr.message);
+            completionPercent = 100;
+        }
+
         return new Promise((resolve, reject) => {
             db.run(
-                `UPDATE supplier_rfi_response SET status = 'SUBMITTED', submission_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                `UPDATE supplier_rfi_response SET status = 'SUBMITTED', completion_percent = ?, submission_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                  WHERE response_id = ?`,
-                [response.response_id],
+                [completionPercent, response.response_id],
                 async function(err) {
                     if (err) return reject(err);
 

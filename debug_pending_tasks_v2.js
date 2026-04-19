@@ -11,7 +11,7 @@ async function debug() {
         const buyerId = buyer.buyerid;
         console.log("Checking for Buyer ID:", buyerId);
 
-        db.get("SELECT userid, role, subrole FROM users WHERE buyerid = ? AND role = 'BUYER' LIMIT 1", [buyerId], async (err, user) => {
+        db.get("SELECT userid, role, subrole FROM sdn_users WHERE buyerid = ? AND role = 'BUYER' LIMIT 1", [buyerId], async (err, user) => {
             if (err || !user) {
                 console.log("No user found for this buyer, checking all pending tasks for this buyer...");
             } else {

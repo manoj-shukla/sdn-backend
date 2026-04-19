@@ -84,7 +84,7 @@ class BuyerService {
                                 });
                             }
 
-                            db.run(`INSERT INTO users (username, email, role, subrole, buyerid, password) VALUES (?, ?, ?, ?, ?, ?)`,
+                            db.run(`INSERT INTO sdn_users (username, email, role, subrole, buyerid, password) VALUES (?, ?, ?, ?, ?, ?)`,
                                 [buyerName, email, 'BUYER', 'Buyer Admin', buyerId, hash],
                                 async function (userErr) {
                                     if (userErr) {

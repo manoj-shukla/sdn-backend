@@ -10,7 +10,7 @@ class AuthService {
         return new Promise((resolve, reject) => {
                 db.get(`
                     SELECT u.*, b.isSandboxActive, s.approvalStatus, s.legalName as supplierName
-                    FROM users u 
+                    FROM sdn_users u 
                     LEFT JOIN buyers b ON u.buyerid = b.buyerid 
                     LEFT JOIN suppliers s ON u.supplierid = s.supplierid
                     WHERE (u.username = ? OR u.email = ?) AND (u.is_deleted = false OR u.is_deleted IS NULL)
@@ -101,7 +101,7 @@ class AuthService {
         return new Promise((resolve, reject) => {
             db.get(`
                 SELECT u.userid, u.username, u.email, u.role, u.buyerid, u.supplierid, u.subrole, u.circleid, b.issandboxactive, s.approvalstatus, s.legalname as suppliername
-                FROM users u
+                FROM sdn_users u
                 LEFT JOIN buyers b ON u.buyerid = b.buyerid 
                 LEFT JOIN suppliers s ON u.supplierid = s.supplierid
                 WHERE u.userid = ? AND (u.is_deleted = false OR u.is_deleted IS NULL)
@@ -136,7 +136,7 @@ class AuthService {
             if (!isValidEmail(email)) {
                 return reject(new Error("Invalid email format"));
             }
-            db.get(`SELECT userid FROM users WHERE email = ?`, [email], (err, user) => {
+            db.get(`SELECT userid FROM sdn_users WHERE email = ?`, [email], (err, user) => {
                 if (err) return reject(err);
 
                 // Security: Don't reveal if user exists, but for logic we proceed if they do
@@ -183,7 +183,7 @@ class AuthService {
                     return reject(new Error("Reset token expired"));
                 }
                 const user = await new Promise((res, rej) => {
-                    db.get("SELECT userid FROM users WHERE email = ?", [resetData.email], (err, row) => {
+                    db.get("SELECT userid FROM sdn_users WHERE email = ?", [resetData.email], (err, row) => {
                         if (err || !row) res(null); else res(row);
                     });
                 });
@@ -207,13 +207,13 @@ class AuthService {
             }
 
             const hashedPassword = await bcrypt.hash(newPassword, SALT_ROUNDS);
-            db.run(`UPDATE users SET password = ?, mustchangepassword = false WHERE userid = ?`, [hashedPassword, userId], (err) => {
+            db.run(`UPDATE sdn_users SET password = ?, mustchangepassword = false WHERE userid = ?`, [hashedPassword, userId], (err) => {
                 if (err) {
                     console.error("[AuthService.resetPassword] UPDATE Error:", err);
                     return reject(err);
                 }
                 // Clear reset token if it was in DB
-                db.run(`DELETE FROM password_resets WHERE email = (SELECT email FROM users WHERE userid = ?)`, [userId]);
+                db.run(`DELETE FROM password_resets WHERE email = (SELECT email FROM sdn_users WHERE userid = ?)`, [userId]);
                 resolve({ success: true, message: "Password updated successfully" });
             });
         });
@@ -222,7 +222,7 @@ class AuthService {
     static async changePassword(userId, currentPassword, newPassword) {
         return new Promise((resolve, reject) => {
             console.log(`DEBUG [AuthService.changePassword]: Attempting change for userId=${userId}`);
-            db.get('SELECT * FROM users WHERE userid = ?', [userId], async (err, user) => {
+            db.get('SELECT * FROM sdn_users WHERE userid = ?', [userId], async (err, user) => {
                 if (err) {
                     console.error(`DEBUG [AuthService.changePassword]: DB Error: ${err.message}`);
                     return reject(err);
@@ -246,7 +246,7 @@ class AuthService {
                 }
 
                 const hashedPassword = await bcrypt.hash(newPassword, 10);
-                db.run('UPDATE users SET password = ?, mustchangepassword = FALSE WHERE userid = ?',
+                db.run('UPDATE sdn_users SET password = ?, mustchangepassword = FALSE WHERE userid = ?',
                     [hashedPassword, userId], (err) => {
                         if (err) {
                             console.error(`DEBUG [AuthService.changePassword]: Update Error: ${err.message}`);
@@ -264,7 +264,7 @@ class AuthService {
         return new Promise((resolve, reject) => {
             db.get(`
                 SELECT u.*, b.isSandboxActive, s.approvalStatus, s.legalName as supplierName
-                FROM users u 
+                FROM sdn_users u 
                 LEFT JOIN buyers b ON u.buyerid = b.buyerid 
                 LEFT JOIN suppliers s ON u.supplierid = s.supplierid
                 WHERE u.userid = ? AND (u.is_deleted = false OR u.is_deleted IS NULL)

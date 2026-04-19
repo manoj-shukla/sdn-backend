@@ -7,8 +7,8 @@ class UserService {
         return new Promise((resolve, reject) => {
             const offset = (page - 1) * pageSize;
 
-            let query = "SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", isActive as \"isActive\", phone, \"firstName\", \"lastName\" FROM users";
-            let countQuery = "SELECT COUNT(*) as count FROM users";
+            let query = "SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", isActive as \"isActive\", phone, \"firstName\", \"lastName\" FROM sdn_users";
+            let countQuery = "SELECT COUNT(*) as count FROM sdn_users";
             const params = [];
 
             const whereClauses = ["(is_deleted = false OR is_deleted IS NULL)"];
@@ -50,7 +50,7 @@ class UserService {
 
     static async getAdmins() {
         return new Promise((resolve, reject) => {
-            db.all("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\" FROM users WHERE role = 'ADMIN' AND (is_deleted = false OR is_deleted IS NULL)", [], (err, rows) => {
+            db.all("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\" FROM sdn_users WHERE role = 'ADMIN' AND (is_deleted = false OR is_deleted IS NULL)", [], (err, rows) => {
                 if (err) return reject(err);
                 resolve(rows);
             });
@@ -59,7 +59,7 @@ class UserService {
 
     static async getUserById(userId) {
         return new Promise((resolve, reject) => {
-            db.get("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", isActive as \"isActive\", phone, \"firstName\", \"lastName\" FROM users WHERE userId = ? AND (is_deleted = false OR is_deleted IS NULL)", [userId], (err, row) => {
+            db.get("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", isActive as \"isActive\", phone, \"firstName\", \"lastName\" FROM sdn_users WHERE userId = ? AND (is_deleted = false OR is_deleted IS NULL)", [userId], (err, row) => {
                 if (err) return reject(err);
                 resolve(row);
             });
@@ -77,7 +77,7 @@ class UserService {
                     u.subRole as "subRole", 
                     u.circleId as "circleId", 
                     c.circleName as "circleName" 
-                FROM users u
+                FROM sdn_users u
                 LEFT JOIN circles c ON u.circleId = c.circleId
                 WHERE u.buyerId = ? AND u.role = 'BUYER' AND (u.is_deleted = false OR u.is_deleted IS NULL)
             `;
@@ -115,11 +115,11 @@ class UserService {
                     dbRole = 'ADMIN';
                 }
 
-                db.run(`INSERT INTO users (username, email, role, subRole, buyerId, supplierId, circleId, password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                db.run(`INSERT INTO sdn_users (username, email, role, subRole, buyerId, supplierId, circleId, password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [username, email, dbRole, dbSubRole || null, buyerId || null, supplierId || null, circleId || null, hash],
                     function (err) {
                         if (err) return reject(err);
-                        db.get("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", circleId as \"circleId\" FROM users WHERE userId = ?", [this.lastID], (err, row) => resolve(row));
+                        db.get("SELECT userId as \"userId\", username, email, role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\", circleId as \"circleId\" FROM sdn_users WHERE userId = ?", [this.lastID], (err, row) => resolve(row));
                     }
                 );
             });
@@ -185,27 +185,27 @@ class UserService {
             }
 
             if (updates.length === 0) {
-                return db.get('SELECT userid as "userId", username, email, role, subrole as "subRole", buyerid as "buyerId", supplierid as "supplierId", circleid as "circleId", isactive as "isActive", phone, "firstName", "lastName" FROM users WHERE userid = ?', [userId], (err, row) => {
+                return db.get('SELECT userid as "userId", username, email, role, subrole as "subRole", buyerid as "buyerId", supplierid as "supplierId", circleid as "circleId", isactive as "isActive", phone, "firstName", "lastName" FROM sdn_users WHERE userid = ?', [userId], (err, row) => {
                     if (err) return reject(err);
                     resolve(row);
                 });
             }
 
             params.push(userId);
-            const sql = `UPDATE users SET ${updates.join(', ')} WHERE userid = ?`;
+            const sql = `UPDATE sdn_users SET ${updates.join(', ')} WHERE userid = ?`;
 
             db.run(sql, params, function (err) {
                 if (err) {
                     return reject(err);
                 }
-                db.get('SELECT userid as "userId", username, email, role, subrole as "subRole", buyerid as "buyerId", supplierid as "supplierId", circleid as "circleId", isactive as "isActive", phone, "firstName", "lastName" FROM users WHERE userid = ?', [userId], (err, row) => resolve(row));
+                db.get('SELECT userid as "userId", username, email, role, subrole as "subRole", buyerid as "buyerId", supplierid as "supplierId", circleid as "circleId", isactive as "isActive", phone, "firstName", "lastName" FROM sdn_users WHERE userid = ?', [userId], (err, row) => resolve(row));
             });
         });
     }
 
     static async deleteUser(userId, performedByUserId) {
         return new Promise((resolve, reject) => {
-            db.run("UPDATE users SET is_deleted = true, deleted_at = CURRENT_TIMESTAMP WHERE userId = ?", [userId], function(err) {
+            db.run("UPDATE sdn_users SET is_deleted = true, deleted_at = CURRENT_TIMESTAMP WHERE userId = ?", [userId], function(err) {
                 if (err) return reject(err);
                 
                 // Record Audit Log

@@ -36,7 +36,7 @@ async function cleanupTestData() {
 
     // Clean up test user
     if (testUserId) {
-        await new Promise(r => db.run('DELETE FROM users WHERE userId = $1', [testUserId], r));
+        await new Promise(r => db.run('DELETE FROM sdn_users WHERE userId = $1', [testUserId], r));
     }
 
     // Clean up test role
@@ -109,7 +109,7 @@ describe('User Management Integration Tests', () => {
 
             test('should hash password before storing', async () => {
                 const user = await new Promise((resolve) => {
-                    db.get("SELECT password FROM users WHERE userId = $1", [testUserId], (err, row) => {
+                    db.get("SELECT password FROM sdn_users WHERE userId = $1", [testUserId], (err, row) => {
                         resolve(row);
                     });
                 });
@@ -224,7 +224,7 @@ describe('User Management Integration Tests', () => {
                 });
 
                 expect(response.status).toBe(200);
-                response.data.users.forEach(user => {
+                response.data.sdn_users.forEach(user => {
                     expect(user.role).toBe('BUYER');
                 });
 
@@ -237,7 +237,7 @@ describe('User Management Integration Tests', () => {
                 });
 
                 expect(response.status).toBe(200);
-                response.data.users.forEach(user => {
+                response.data.sdn_users.forEach(user => {
                     expect(user.buyerId).toBe(1);
                 });
             });
@@ -248,7 +248,7 @@ describe('User Management Integration Tests', () => {
                 });
 
                 expect(response.status).toBe(200);
-                const found = response.data.users.find(u => u.username === testUsername);
+                const found = response.data.sdn_users.find(u => u.username === testUsername);
                 expect(found).toBeDefined();
             });
 
@@ -257,7 +257,7 @@ describe('User Management Integration Tests', () => {
                     headers: { 'Authorization': `Bearer ${adminToken}` }
                 });
 
-                response.data.users.forEach(user => {
+                response.data.sdn_users.forEach(user => {
                     expect(user.password).toBeUndefined();
                 });
             });
@@ -428,7 +428,7 @@ describe('User Management Integration Tests', () => {
 
                 // Verify hard delete (user is completely removed)
                 const deleted = await new Promise((resolve) => {
-                    db.get("SELECT * FROM users WHERE userId = $1", [tempUserId], (err, row) => {
+                    db.get("SELECT * FROM sdn_users WHERE userId = $1", [tempUserId], (err, row) => {
                         resolve(row);
                     });
                 });
@@ -438,7 +438,7 @@ describe('User Management Integration Tests', () => {
                 log('DELETE', 'User hard deleted');
 
                 // Clean up
-                await new Promise(r => db.run('DELETE FROM users WHERE userId = $1', [tempUserId], r));
+                await new Promise(r => db.run('DELETE FROM sdn_users WHERE userId = $1', [tempUserId], r));
             });
         });
     });
@@ -661,7 +661,7 @@ describe('User Management Integration Tests', () => {
                 expect(response.status).toBe(200);
 
                 // Clean up
-                await new Promise(r => db.run('DELETE FROM users WHERE username = $1', [permUsername], r));
+                await new Promise(r => db.run('DELETE FROM sdn_users WHERE username = $1', [permUsername], r));
 
                 log('AUTH', 'Action permitted with correct role');
             });

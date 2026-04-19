@@ -2,7 +2,7 @@ const db = require('./config/database');
 
 async function checkUsers() {
     try {
-        db.get("SELECT userId, username, password, role FROM users WHERE username = 'admin'", [], (err, row) => {
+        db.get("SELECT userId, username, password, role FROM sdn_users WHERE username = 'admin'", [], (err, row) => {
             if (err) {
                 console.error("Error fetching admin user:", err);
             } else if (row) {

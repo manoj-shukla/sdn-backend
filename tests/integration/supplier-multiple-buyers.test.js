@@ -101,7 +101,7 @@ describe('Supplier → Buyers Many-to-Many Relationship', () => {
             const supplierUsername = `multi_buyer_supplier_${suffix}`;
             const passwordHash = await require('bcryptjs').hash('SupplierUser123!', 10);
             const userResult = await query(
-                'INSERT INTO users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
+                'INSERT INTO sdn_users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
                 [supplierUsername, passwordHash, `supplier_${suffix}@example.com`, 'SUPPLIER', supplierId]
             );
             supplierUserId = userResult.rows[0].userid;
@@ -112,19 +112,19 @@ describe('Supplier → Buyers Many-to-Many Relationship', () => {
             const mb3Name = `mbuyer3_user_${suffix}`;
 
             const buyer1UserResult = await query(
-                'INSERT INTO users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
+                'INSERT INTO sdn_users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
                 [mb1Name, passwordHash, `buyer1_${suffix}@example.com`, 'BUYER', buyer1Id]
             );
             buyer1User = { userId: buyer1UserResult.rows[0].userid, username: mb1Name, role: 'BUYER', buyerId: buyer1Id };
 
             const buyer2UserResult = await query(
-                'INSERT INTO users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
+                'INSERT INTO sdn_users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
                 [mb2Name, passwordHash, `buyer2_${suffix}@example.com`, 'BUYER', buyer2Id]
             );
             buyer2User = { userId: buyer2UserResult.rows[0].userid, username: mb2Name, role: 'BUYER', buyerId: buyer2Id };
 
             const buyer3UserResult = await query(
-                'INSERT INTO users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
+                'INSERT INTO sdn_users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5) RETURNING userId',
                 [mb3Name, passwordHash, `buyer3_${suffix}@example.com`, 'BUYER', buyer3Id]
             );
             buyer3User = { userId: buyer3UserResult.rows[0].userid, username: mb3Name, role: 'BUYER', buyerId: buyer3Id };
@@ -157,7 +157,7 @@ describe('Supplier → Buyers Many-to-Many Relationship', () => {
             await query('DELETE FROM user_supplier_memberships WHERE supplierId = $1', [supplierId]);
             await query('DELETE FROM suppliers WHERE legalName = $1', ['Multi-Buyer Supplier']);
             await query('DELETE FROM buyers WHERE buyerName LIKE $1', ['Multi-Buyer Buyer%']);
-            await query('DELETE FROM users WHERE username LIKE $1', ['multi_buyer_%']);
+            await query('DELETE FROM sdn_users WHERE username LIKE $1', ['multi_buyer_%']);
             log('CLEANUP', 'Test data deleted');
         } catch (err) {
             log('CLEANUP', 'Cleanup failed', { error: err.message });

@@ -80,8 +80,8 @@ describe('RBAC & Data Isolation Tests', () => {
             // Clean up any existing test data first
             console.log('[SETUP] Cleaning up existing test data...');
             try {
-                await query('DELETE FROM user_supplier_memberships WHERE userId IN (SELECT userId FROM users WHERE email LIKE $1)', [`%_${testSuffix}@example.com`]);
-                await query('DELETE FROM users WHERE email LIKE $1', [`%_${testSuffix}@example.com`]);
+                await query('DELETE FROM user_supplier_memberships WHERE userId IN (SELECT userId FROM sdn_users WHERE email LIKE $1)', [`%_${testSuffix}@example.com`]);
+                await query('DELETE FROM sdn_users WHERE email LIKE $1', [`%_${testSuffix}@example.com`]);
                 await query('DELETE FROM suppliers WHERE legalName LIKE $1', [`RBAC % ${testSuffix}%`]);
                 await query('DELETE FROM buyers WHERE buyerName LIKE $1', [`RBAC % ${testSuffix}%`]);
                 console.log('[SETUP] Cleanup completed');
@@ -127,28 +127,28 @@ describe('RBAC & Data Isolation Tests', () => {
             const passwordHash = await require('bcryptjs').hash('TestUser123!', 10);
 
             const buyer1UserResult = await run(
-                'INSERT INTO users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5)',
+                'INSERT INTO sdn_users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5)',
                 [testUser1, passwordHash, testEmail1, 'BUYER', buyer1Id]
             );
             const buyer1UserId = buyer1UserResult.rows[0].lastID;
             console.log('[SETUP] Buyer 1 user created with ID:', buyer1UserId);
 
             const buyer2UserResult = await run(
-                'INSERT INTO users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5)',
+                'INSERT INTO sdn_users (username, password, email, role, buyerId) VALUES ($1, $2, $3, $4, $5)',
                 [testUser2, passwordHash, testEmail2, 'BUYER', buyer2Id]
             );
             const buyer2UserId = buyer2UserResult.rows[0].lastID;
             console.log('[SETUP] Buyer 2 user created with ID:', buyer2UserId);
 
             const supplier1UserResult = await run(
-                'INSERT INTO users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5)',
+                'INSERT INTO sdn_users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5)',
                 [testUser3, passwordHash, testEmail3, 'SUPPLIER', supplier1Id]
             );
             const supplier1UserId = supplier1UserResult.rows[0].lastID;
             console.log('[SETUP] Supplier 1 user created with ID:', supplier1UserId);
 
             const supplier2UserResult = await run(
-                'INSERT INTO users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5)',
+                'INSERT INTO sdn_users (username, password, email, role, supplierId) VALUES ($1, $2, $3, $4, $5)',
                 [testUser4, passwordHash, testEmail4, 'SUPPLIER', supplier2Id]
             );
             const supplier2UserId = supplier2UserResult.rows[0].lastID;
@@ -626,7 +626,7 @@ describe('RBAC & Data Isolation Tests', () => {
             const users = Array.isArray(response.data) ? response.data : (response.data.data || response.data.users || []);
 
             // All returned users should belong to buyer1
-            users.forEach(user => {
+            sdn_users.forEach(user => {
                 const userBuyerId = user.buyerid || user.buyerId;
                 if (userBuyerId) {
                     expect(userBuyerId).toBe(buyer1Id);
@@ -634,7 +634,7 @@ describe('RBAC & Data Isolation Tests', () => {
             });
 
             // Verify buyer2 users are NOT in response
-            const usernames = users.map(u => u.username);
+            const usernames = sdn_users.map(u => u.username);
             expect(usernames).not.toContain('rbac_buyer2');
 
             // Verify response doesn't contain buyer2 user data
@@ -642,7 +642,7 @@ describe('RBAC & Data Isolation Tests', () => {
             expect(responseStr).not.toContain('buyer2@example.com');
             expect(responseStr).not.toContain('supplier2@example.com');
 
-            log('RBAC', 'User list filtered by buyer', { userCount: users.length });
+            log('RBAC', 'User list filtered by buyer', { userCount: sdn_users.length });
         });
 
         test('CRITICAL: Analytics endpoints do not leak cross-buyer data', async () => {

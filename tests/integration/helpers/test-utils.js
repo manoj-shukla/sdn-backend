@@ -39,7 +39,7 @@ function createCleanupHelper(db) {
     };
 
     return {
-        addUser: (id) => cleanupIds.users.push(id),
+        addUser: (id) => cleanupIds.sdn_users.push(id),
         addSupplier: (id) => cleanupIds.suppliers.push(id),
         addBuyer: (id) => cleanupIds.buyers.push(id),
         addCircle: (id) => cleanupIds.circles.push(id),
@@ -47,12 +47,12 @@ function createCleanupHelper(db) {
         async cleanup() {
             const queries = [];
 
-            if (cleanupIds.users.length > 0) {
+            if (cleanupIds.sdn_users.length > 0) {
                 queries.push(
-                    db.run(`DELETE FROM user_supplier_memberships WHERE userId IN (${cleanupIds.users.join(',')})`)
+                    db.run(`DELETE FROM user_supplier_memberships WHERE userId IN (${cleanupIds.sdn_users.join(',')})`)
                 );
                 queries.push(
-                    db.run(`DELETE FROM users WHERE userId IN (${cleanupIds.users.join(',')})`)
+                    db.run(`DELETE FROM sdn_users WHERE userId IN (${cleanupIds.sdn_users.join(',')})`)
                 );
             }
 

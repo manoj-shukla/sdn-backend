@@ -5,7 +5,7 @@ class CircleService {
         return new Promise((resolve, reject) => {
             const query = `
                 SELECT c.circleId as \"circleId\", c.buyerId as \"buyerId\", c.circleName as \"circleName\", c.description, c.createdAt as \"createdAt\",
-                       (SELECT COUNT(*) FROM users WHERE circleid = c.circleId) as \"memberCount\"
+                       (SELECT COUNT(*) FROM sdn_users WHERE circleid = c.circleId) as \"memberCount\"
                 FROM circles c 
                 WHERE c.buyerId = ?
             `;
@@ -17,7 +17,7 @@ class CircleService {
         return new Promise((resolve, reject) => {
             const query = `
                 SELECT c.circleId as \"circleId\", c.buyerId as \"buyerId\", c.circleName as \"circleName\", c.description, c.createdAt as \"createdAt\",
-                       (SELECT COUNT(*) FROM users WHERE circleid = c.circleId) as \"memberCount\"
+                       (SELECT COUNT(*) FROM sdn_users WHERE circleid = c.circleId) as \"memberCount\"
                 FROM circles c 
                 WHERE c.circleId = ?
             `;
@@ -106,7 +106,7 @@ class CircleService {
     static async deleteCircle(id) {
         return new Promise((resolve, reject) => {
             // Check if users are assigned to this circle
-            db.get("SELECT COUNT(*) as count FROM users WHERE \"circleid\" = $1", [id], (err, row) => {
+            db.get("SELECT COUNT(*) as count FROM sdn_users WHERE \"circleid\" = $1", [id], (err, row) => {
                 if (err) return reject(err);
                 if (row && parseInt(row.count) > 0) {
                     const error = new Error("Cannot delete circle: There are team members assigned to it.");

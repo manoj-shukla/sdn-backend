@@ -30,7 +30,7 @@ class AnalyticsService {
                 });
             }
 
-            db.all("SELECT role, TO_CHAR(createdAt, 'YYYY-MM') as month FROM users WHERE createdAt >= NOW() - INTERVAL '6 months'", [], (err, rows) => {
+            db.all("SELECT role, TO_CHAR(createdAt, 'YYYY-MM') as month FROM sdn_users WHERE createdAt >= NOW() - INTERVAL '6 months'", [], (err, rows) => {
                 if (err) return reject(err);
 
                 rows.forEach(row => {
@@ -54,7 +54,7 @@ class AnalyticsService {
 
     static async getUserDistribution() {
         return new Promise((resolve, reject) => {
-            db.all("SELECT role, COUNT(*) as count FROM users GROUP BY role", [], (err, rows) => {
+            db.all("SELECT role, COUNT(*) as count FROM sdn_users GROUP BY role", [], (err, rows) => {
                 if (err) return reject(err);
                 const distribution = [
                     { name: 'Admins', value: 0 },
@@ -404,7 +404,7 @@ class AnalyticsService {
 
                 // 1. Total Users
                 const totalUsers = await new Promise((res, rej) => {
-                    db.get("SELECT COUNT(*) as count FROM users", [], (err, row) => err ? rej(err) : res(row?.count || 0));
+                    db.get("SELECT COUNT(*) as count FROM sdn_users", [], (err, row) => err ? rej(err) : res(row?.count || 0));
                 });
                 summary.totalUsers = parseInt(totalUsers);
 

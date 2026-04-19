@@ -33,7 +33,7 @@ let testUserId = null;
 async function cleanupE2E() {
     if (!db.run) return;
     if (testUserId) {
-        await new Promise(r => db.run('DELETE FROM users WHERE userid = $1', [testUserId], r));
+        await new Promise(r => db.run('DELETE FROM sdn_users WHERE userid = $1', [testUserId], r));
     }
     if (testInvitationId) {
         await new Promise(r => db.run('DELETE FROM invitations WHERE invitationid = $1', [testInvitationId], r));

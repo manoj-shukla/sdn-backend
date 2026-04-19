@@ -6,7 +6,7 @@ const EMAIL = 'chndn.mishra@gmail.com';
 setTimeout(() => {
     db.get(
         `SELECT userid, username, email, role, subrole, isactive, buyerid, supplierid
-         FROM users
+         FROM sdn_users
          WHERE email = $1 OR username = $1`,
         [EMAIL],
         (err, row) => {

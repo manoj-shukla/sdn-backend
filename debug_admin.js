@@ -2,7 +2,7 @@ const db = require('./config/database');
 const bcrypt = require('bcryptjs');
 
 async function checkAdmin() {
-    db.get("SELECT * FROM users WHERE username = 'admin'", [], async (err, user) => {
+    db.get("SELECT * FROM sdn_users WHERE username = 'admin'", [], async (err, user) => {
         if (err) {
             console.error("Error:", err);
             process.exit(1);

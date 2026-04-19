@@ -71,7 +71,7 @@ class InvitationService {
             const { legalName, supplierType, country, internalCode, isPreApproved, buyerComments } = data;
 
             const checkQuery = `
-                SELECT email as identifier FROM users WHERE email = ?
+                SELECT email as identifier FROM sdn_users WHERE email = ?
                 UNION
                 SELECT email as identifier FROM invitations WHERE email = ? AND status != 'REVOKED' AND status != 'EXPIRED'
                 UNION
@@ -150,7 +150,7 @@ class InvitationService {
                 const invitation = await this.verifyToken(token);
 
                 // 2. Check if user already exists
-                db.get("SELECT userId FROM users WHERE email = ?", [invitation.email], async (err, existingUser) => {
+                db.get("SELECT userId FROM sdn_users WHERE email = ?", [invitation.email], async (err, existingUser) => {
                     if (err) return reject(err);
 
                     const createSupplierAndMembership = (targetUserId) => {
@@ -167,7 +167,7 @@ class InvitationService {
                                 db.run("UPDATE suppliers SET suppliercode = ? WHERE supplierid = ?", [code, supplierId]);
 
                                 // 4. Update user role and linking
-                                db.run(`UPDATE users SET role = 'SUPPLIER', supplierid = ?, buyerid = ? WHERE userid = ?`,
+                                db.run(`UPDATE sdn_users SET role = 'SUPPLIER', supplierid = ?, buyerid = ? WHERE userid = ?`,
                                     [supplierId, invitation.buyerId, targetUserId],
                                     (err) => {
                                         if (err) return reject(err);
@@ -199,7 +199,7 @@ class InvitationService {
                     // 3. Create User if doesn't exist
                     bcrypt.hash(password, 10, (err, hash) => {
                         if (err) return reject(err);
-                        db.run(`INSERT INTO users (username, email, password, role, supplierid, buyerid) VALUES (?, ?, ?, ?, ?, ?)`,
+                        db.run(`INSERT INTO sdn_users (username, email, password, role, supplierid, buyerid) VALUES (?, ?, ?, ?, ?, ?)`,
                             [invitation.email, invitation.email, hash, 'SUPPLIER', null, null],
                             function (err) {
                                 if (err) return reject(err);

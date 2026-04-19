@@ -30,10 +30,10 @@ async function sync() {
                     .replace(/[^a-z0-9_@.-]/g, '');
 
                 await new Promise((res) => {
-                    db.get('SELECT userId FROM users WHERE buyerId = $1 OR username = $2', [buyer.buyerid, username], (err, user) => {
+                    db.get('SELECT userId FROM sdn_users WHERE buyerId = $1 OR username = $2', [buyer.buyerid, username], (err, user) => {
                         if (!user) {
                             db.run(
-                                'INSERT INTO users (username, password, email, role, subRole, buyerId, isActive, mustChangePassword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+                                'INSERT INTO sdn_users (username, password, email, role, subRole, buyerId, isActive, mustChangePassword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
                                 [username, buyerHash, buyer.email, 'BUYER', 'Admin', buyer.buyerid, buyer.isactive ?? true, true],
                                 (err) => {
                                     if (err) console.error(`  ❌ Failed to create user for buyer ${buyer.buyername}:`, err.message);
@@ -72,10 +72,10 @@ async function sync() {
                 const username = email;
 
                 await new Promise((res) => {
-                    db.get('SELECT userId FROM users WHERE supplierId = $1 OR username = $2', [supplier.supplierid, username], (err, user) => {
+                    db.get('SELECT userId FROM sdn_users WHERE supplierId = $1 OR username = $2', [supplier.supplierid, username], (err, user) => {
                         if (!user) {
                             db.run(
-                                'INSERT INTO users (username, password, email, role, supplierId, buyerId, isActive, mustChangePassword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+                                'INSERT INTO sdn_users (username, password, email, role, supplierId, buyerId, isActive, mustChangePassword) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
                                 [username, supplierHash, email, 'SUPPLIER', supplier.supplierid, supplier.buyerid || null, supplier.isactive ?? true, true],
                                 (err) => {
                                     if (err) console.error(`  ❌ Failed to create user for supplier ${supplier.legalname}:`, err.message);

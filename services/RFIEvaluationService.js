@@ -77,12 +77,16 @@ class RFIEvaluationService {
                                             }
                                         }
                                     }
+                                    // completion_percent is a NUMERIC column — pg may return it as a string.
+                                    // Use Number() to safely convert, then fall back to 100 for submitted responses.
+                                    const rawPct = Number(r.completion_percent);
+                                    const completionPercent = (!rawPct || isNaN(rawPct)) ? 100 : rawPct;
                                     return {
                                         supplierId: r.supplier_id,
                                         supplierName: r.supplier_name,
                                         invitationStatus: r.invitation_status || 'SUBMITTED',
                                         evaluationStatus: r.evaluation_status || 'PENDING',
-                                        completionPercent: r.completion_percent || 100,
+                                        completionPercent,
                                         submittedAt: r.submission_date,
                                         notes,
                                         answers

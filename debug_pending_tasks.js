@@ -5,7 +5,7 @@ async function debug() {
     const userId = 1; // Assuming Test User ID is 1
     const userRole = 'BUYER';
 
-    db.get("SELECT role, subrole, buyerid FROM users WHERE userid = ?", [userId], async (err, user) => {
+    db.get("SELECT role, subrole, buyerid FROM sdn_users WHERE userid = ?", [userId], async (err, user) => {
         if (err) {
             console.error("User not found", err);
             process.exit(1);

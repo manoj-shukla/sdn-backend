@@ -5,7 +5,7 @@ const AuthService = require('./services/AuthService');
 async function testMyRequests() {
     try {
         // Find the last created user
-        db.get("SELECT email FROM users ORDER BY createdat DESC LIMIT 1", [], async (err, row) => {
+        db.get("SELECT email FROM sdn_users ORDER BY createdat DESC LIMIT 1", [], async (err, row) => {
             if (err) {
                 console.error("Fetch User Failed:", err);
                 process.exit(1);

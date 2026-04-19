@@ -24,24 +24,24 @@ async function resetPasswords() {
 
         // Fetch all users first
         const { rows: users } = await client.query(
-            'SELECT userid, username, email, role FROM users ORDER BY userid'
+            'SELECT userid, username, email, role FROM sdn_users ORDER BY userid'
         );
 
-        if (users.length === 0) {
+        if (sdn_users.length === 0) {
             console.log('No users found in the database.');
             return;
         }
 
-        console.log(`\nFound ${users.length} user(s). Resetting passwords...\n`);
+        console.log(`\nFound ${sdn_users.length} user(s). Resetting passwords...\n`);
 
         // Hash the new password once (same hash for all)
         const hash = await bcrypt.hash(NEW_PASSWORD, 10);
 
         // Update all at once
-        await client.query('UPDATE users SET password = $1', [hash]);
+        await client.query('UPDATE sdn_users SET password = $1', [hash]);
 
         console.log('✅ Password updated for:');
-        users.forEach(u => {
+        sdn_users.forEach(u => {
             console.log(`   [${u.role}] ${u.username} — ${u.email || 'no email'}`);
         });
 

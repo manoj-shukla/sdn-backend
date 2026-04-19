@@ -48,7 +48,7 @@ class SupplierService {
                 query += ` WHERE s.supplierid IN (${placeholders})`;
                 params = ids;
             } else if (buyerId) {
-                query += " WHERE buyerid = ? OR createdbyuserid IN (SELECT userid FROM users WHERE buyerid = ?)";
+                query += " WHERE buyerid = ? OR createdbyuserid IN (SELECT userid FROM sdn_users WHERE buyerid = ?)";
                 params.push(buyerId, buyerId);
             }
 
@@ -119,7 +119,7 @@ class SupplierService {
         const queries = {
             supplier: `SELECT * FROM suppliers WHERE supplierid = ?`,
             address: `SELECT * FROM addresses WHERE supplierid = ? ORDER BY isprimary DESC`,
-            contacts: `SELECT userid, email, role, subrole FROM users WHERE supplierid = ?`
+            contacts: `SELECT userid, email, role, subrole FROM sdn_users WHERE supplierid = ?`
         };
 
         return new Promise((resolve, reject) => {
@@ -734,7 +734,7 @@ class SupplierService {
                     bid = await new Promise((resolveInv) => {
                         db.get(
                             `SELECT i.buyerid 
-                             FROM users u 
+                             FROM sdn_users u 
                              JOIN invitations i ON u.email = i.email 
                              WHERE u.supplierid = ? AND i.buyerid IS NOT NULL 
                              ORDER BY i.createdat DESC LIMIT 1`,

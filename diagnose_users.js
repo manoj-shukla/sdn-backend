@@ -6,7 +6,7 @@ async function diagnose() {
     // Give the database wrapper a moment to initialize
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    db.all('SELECT role, count(*) FROM users GROUP BY role', [], (err, rows) => {
+    db.all('SELECT role, count(*) FROM sdn_users GROUP BY role', [], (err, rows) => {
         if (err) console.error('Error fetching user counts:', err);
         else {
             console.log('User counts by role:', rows);
@@ -23,13 +23,13 @@ async function diagnose() {
                 // Detailed check
                 db.all('SELECT buyerId, buyerName, email FROM buyers', [], (err, buyers) => {
                     db.all('SELECT supplierId, legalName, approvalStatus FROM suppliers', [], (err, suppliers) => {
-                        db.all('SELECT username, email, role, buyerId, supplierId FROM users', [], (err, users) => {
+                        db.all('SELECT username, email, role, buyerId, supplierId FROM sdn_users', [], (err, users) => {
                             
                             const missingBuyers = (buyers || []).filter(b => !(users || []).some(u => u.buyerid === b.buyerid));
                             const missingSuppliers = (suppliers || []).filter(s => !(users || []).some(u => u.supplierid === s.supplierid));
                             
-                            console.log(`\nFound ${missingBuyers.length} buyers missing from users table.`);
-                            console.log(`Found ${missingSuppliers.length} suppliers missing from users table.`);
+                            console.log(`\nFound ${missingBuyers.length} buyers missing from sdn_users table.`);
+                            console.log(`Found ${missingSuppliers.length} suppliers missing from sdn_users table.`);
                             
                             if (missingBuyers.length > 0) {
                                 console.log('Missing Buyers:', missingBuyers.map(b => `${b.buyername} (ID: ${b.buyerid})`).join(', '));

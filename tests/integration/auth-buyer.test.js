@@ -34,10 +34,10 @@ async function cleanupTestData() {
         // Clean up users and invitations by email
         const testEmails = ['newuser@testbuyer.com', 'admin@testbuyer.com', 'cancel-test@testbuyer.com'];
         await new Promise(r => db.run('DELETE FROM invitations WHERE email IN ($1, $2, $3)', testEmails, r));
-        await new Promise(r => db.run('DELETE FROM users WHERE email IN ($1, $2, $3)', testEmails, r));
+        await new Promise(r => db.run('DELETE FROM sdn_users WHERE email IN ($1, $2, $3)', testEmails, r));
         
         if (testUserId) {
-            await new Promise(r => db.run('DELETE FROM users WHERE userid = $1', [testUserId], r));
+            await new Promise(r => db.run('DELETE FROM sdn_users WHERE userid = $1', [testUserId], r));
         }
 
         if (testBuyerId) {
@@ -148,7 +148,7 @@ describe('Buyer Integration Tests', () => {
         // Clean up any existing test buyer data to avoid conflicts
         try {
             await new Promise(r => db.run('DELETE FROM invitations WHERE email = $1', ['newuser@testbuyer.com'], r));
-            await new Promise(r => db.run('DELETE FROM users WHERE email = $1', ['admin@testbuyer.com'], r));
+            await new Promise(r => db.run('DELETE FROM sdn_users WHERE email = $1', ['admin@testbuyer.com'], r));
             await new Promise(r => db.run('DELETE FROM buyers WHERE buyercode = $1', ['TESTBUYER01'], r));
             await new Promise(r => db.run('DELETE FROM buyers WHERE buyername = $1', ['Test Buyer Organization'], r));
         } catch (e) {

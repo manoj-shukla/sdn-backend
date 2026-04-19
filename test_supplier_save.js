@@ -3,7 +3,7 @@ const db = require('./config/database');
 const AuthService = require('./services/AuthService');
 
 async function reproduceSave() {
-    db.get("SELECT email FROM users WHERE email = 'test_1772241719976@example.com'", [], async (err, row) => {
+    db.get("SELECT email FROM sdn_users WHERE email = 'test_1772241719976@example.com'", [], async (err, row) => {
         if (!row) {
             console.log("No supplier user found.");
             process.exit(0);

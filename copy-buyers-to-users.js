@@ -1,6 +1,6 @@
 // Copies all buyers into the users table so they can log in.
 // Sets password to: admin@123
-// Run: node copy-buyers-to-users.js
+// Run: node copy-buyers-to-sdn_users.js
 
 require('dotenv').config();
 const { Pool } = require('pg');
@@ -53,7 +53,7 @@ async function run() {
 
             // Skip if we have no email AND the username already exists as a user
             const { rows: existing } = await client.query(
-                `SELECT userid FROM users
+                `SELECT userid FROM sdn_users
                  WHERE username = $1 OR (email IS NOT NULL AND email = $2)
                  LIMIT 1`,
                 [username, email]
@@ -62,7 +62,7 @@ async function run() {
             if (existing.length > 0) {
                 // User exists — just make sure their password and buyerId are in sync
                 await client.query(
-                    `UPDATE users
+                    `UPDATE sdn_users
                      SET password  = $1,
                          buyerid   = $2,
                          isactive  = $3
@@ -74,7 +74,7 @@ async function run() {
             } else {
                 // Create fresh user record
                 await client.query(
-                    `INSERT INTO users (username, password, email, role, subrole, buyerid, isactive)
+                    `INSERT INTO sdn_users (username, password, email, role, subrole, buyerid, isactive)
                      VALUES ($1, $2, $3, 'BUYER', 'Admin', $4, $5)`,
                     [username, hash, email, b.buyerid, b.isactive ?? true]
                 );
@@ -93,7 +93,7 @@ async function run() {
         // ── 4. Print final users table ───────────────────────────────────────
         const { rows: allUsers } = await client.query(
             `SELECT userid, username, email, role, subrole, buyerid, isactive
-             FROM users ORDER BY userid`
+             FROM sdn_users ORDER BY userid`
         );
         console.log('All users now in the users table:');
         console.table(allUsers);

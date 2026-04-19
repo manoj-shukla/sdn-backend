@@ -16,7 +16,7 @@ class ChangeRequestController {
         try {
             // REFRESH role/buyerId/supplierId from DB to handle Sandbox role switching
             const user = await new Promise((resolve) => {
-                db.get("SELECT role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\" FROM users WHERE userId = ?", [req.user.userId], (err, row) => {
+                db.get("SELECT role, subRole as \"subRole\", buyerId as \"buyerId\", supplierId as \"supplierId\" FROM sdn_users WHERE userId = ?", [req.user.userId], (err, row) => {
                     if (err || !row) resolve(req.user);
                     else {
                         resolve({
@@ -371,7 +371,7 @@ class ChangeRequestController {
         try {
             // Refresh subRole from DB so sandbox role-switching is always respected
             const freshUser = await new Promise((resolve) => {
-                db.get("SELECT subRole as \"subRole\" FROM users WHERE userId = ?", [req.user.userId], (err, row) => {
+                db.get("SELECT subRole as \"subRole\" FROM sdn_users WHERE userId = ?", [req.user.userId], (err, row) => {
                     if (err || !row) resolve(req.user);
                     else resolve({ ...req.user, subRole: row.subRole || req.user.subRole });
                 });

@@ -60,7 +60,7 @@ class RFIQuestionLibraryService {
             let query = `
                 SELECT q.*, u.role as creator_role, u.username as creator_username
                 FROM rfi_question_library q
-                LEFT JOIN users u ON q.created_by = u.userId
+                LEFT JOIN sdn_users u ON q.created_by = u.userId
                 WHERE q.is_deleted = FALSE
             `;
             const params = [];
@@ -97,7 +97,7 @@ class RFIQuestionLibraryService {
             const query = `
                 SELECT q.*, u.role as creator_role, u.username as creator_username
                 FROM rfi_question_library q
-                LEFT JOIN users u ON q.created_by = u.userId
+                LEFT JOIN sdn_users u ON q.created_by = u.userId
                 WHERE q.question_id = ? AND q.is_deleted = FALSE
             `;
             db.get(query, [questionId], (err, row) => {

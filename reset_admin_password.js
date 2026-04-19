@@ -14,7 +14,7 @@ const pool = new Pool({
 async function resetAdmin() {
     try {
         const hash = await bcrypt.hash('Admin123!', 10);
-        await pool.query("UPDATE users SET password = $1 WHERE username = 'admin'", [hash]);
+        await pool.query("UPDATE sdn_users SET password = $1 WHERE username = 'admin'", [hash]);
         console.log("Admin password reset to Admin123!");
     } catch (err) {
         console.error("Error:", err);

@@ -335,7 +335,7 @@ class PostgresWrapper {
                 try {
                     const hashedPassword = await bcrypt.hash("Admin123!", SALT_ROUNDS);
                     this.run(`
-                        INSERT INTO users (username, password, email, role, subrole, isactive, is_deleted)
+                        INSERT INTO sdn_users (username, password, email, role, subrole, isactive, is_deleted)
                         VALUES ($1, $2, $3, $4, $5, TRUE, FALSE)
                         ON CONFLICT (username) DO UPDATE SET
                             password = EXCLUDED.password,
@@ -364,7 +364,7 @@ class PostgresWrapper {
             };
 
             const sqlSchema = `
-                CREATE TABLE IF NOT EXISTS users (
+                CREATE TABLE IF NOT EXISTS sdn_users (
                     userId SERIAL PRIMARY KEY,
                     username TEXT UNIQUE NOT NULL,
                     password TEXT NOT NULL,
@@ -716,21 +716,21 @@ class PostgresWrapper {
                 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS clonedFromId INTEGER;
                 ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS stepDescription TEXT;
                 ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS requiredActions TEXT;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS mustChangePassword BOOLEAN DEFAULT FALSE;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS isActive BOOLEAN DEFAULT TRUE;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS mustChangePassword BOOLEAN DEFAULT FALSE;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS isActive BOOLEAN DEFAULT TRUE;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS phone TEXT;
                 ALTER TABLE documents ADD COLUMN IF NOT EXISTS isActive BOOLEAN DEFAULT TRUE;
                 ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploadedByUsername TEXT;
                 ALTER TABLE documents ADD COLUMN IF NOT EXISTS verifiedByUserId INTEGER;
                 ALTER TABLE documents ADD COLUMN IF NOT EXISTS verifiedAt TIMESTAMP;
                 ALTER TABLE documents ADD COLUMN IF NOT EXISTS createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS "firstName" TEXT;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS "lastName" TEXT;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS "firstName" TEXT;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS "lastName" TEXT;
                 ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS submissionType TEXT DEFAULT 'INITIAL';
                 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS score INTEGER DEFAULT 0;
                 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS riskLevel TEXT DEFAULT 'Low';
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
             `;
             await new Promise((resolve) => {
                 this.run(migrationSql, [], (err) => {
@@ -849,10 +849,10 @@ class PostgresWrapper {
 
             // MIGRATION: Ensure users table has all required columns (handles old deployments)
             const userColumnsMigrationSql = `
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS buyerId INTEGER;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS supplierId INTEGER;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS circleId INTEGER;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS subRole TEXT;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS buyerId INTEGER;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS supplierId INTEGER;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS circleId INTEGER;
+                ALTER TABLE sdn_users ADD COLUMN IF NOT EXISTS subRole TEXT;
             `;
             await new Promise((resolve) => {
                 this.run(userColumnsMigrationSql, [], (err) => {
@@ -958,7 +958,7 @@ class PostgresWrapper {
                         // Backfill: Add existing user-supplier associations
                         this.run(`
                             INSERT INTO user_supplier_memberships (userId, supplierId)
-                            SELECT userId, supplierId FROM users 
+                            SELECT userId, supplierId FROM sdn_users 
                             WHERE supplierId IS NOT NULL 
                             ON CONFLICT (userId, supplierId) DO NOTHING
                         `);

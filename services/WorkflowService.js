@@ -39,7 +39,7 @@ class WorkflowService {
                 if (err) return reject(err);
                 if (!role) return resolve(); // Already gone
 
-                db.get("SELECT COUNT(*) as count FROM users WHERE \"subrole\" = $1", [role.rolename], (err, user) => {
+                db.get("SELECT COUNT(*) as count FROM sdn_users WHERE \"subrole\" = $1", [role.rolename], (err, user) => {
                     if (err) return reject(err);
                     if (user && parseInt(user.count) > 0) {
                         const error = new Error(`Cannot delete role: ${user.count} user(s) are assigned to it.`);
@@ -622,7 +622,7 @@ class WorkflowService {
                         u.username as "actionByUsername",
                         u.subrole as "actionByRole"
                     FROM step_instances si
-                    LEFT JOIN users u ON si.actionbyuserid = u.userid
+                    LEFT JOIN sdn_users u ON si.actionbyuserid = u.userid
                     WHERE si.instanceid = ?
                     ORDER BY si.steporder ASC
                 `, [instanceId], (err, stepsRaw) => {
@@ -707,7 +707,7 @@ class WorkflowService {
 
         // REFRESH ROLE FROM DB (Crucial for Sandbox Mode switching)
         const user = await new Promise((resolve) => {
-            db.get("SELECT role, subrole, buyerid FROM users WHERE userid = ?", [tokenUser.userId], (err, row) => {
+            db.get("SELECT role, subrole, buyerid FROM sdn_users WHERE userid = ?", [tokenUser.userId], (err, row) => {
                 if (err || !row) resolve(tokenUser); // Fallback to token if error
                 else {
                     // Normalize: use DB values, prefer lowercase from postgres
