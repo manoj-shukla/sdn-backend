@@ -5,7 +5,15 @@ const SECRET_KEY = process.env.JWT_SECRET || "sdn-tech-super-secret-key";
 // Middleware to verify token
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    let token = authHeader && authHeader.split(' ')[1];
+
+    // Fallback: accept `?token=<jwt>` query param. Needed for <iframe src="...">
+    // and window.open() document-preview flows where we cannot inject a
+    // custom Authorization header. The token is still verified below exactly
+    // the same way as a header token — no auth bypass is introduced.
+    if (!token && req.query && req.query.token) {
+        token = req.query.token;
+    }
 
     if (!token) return res.sendStatus(401);
 
@@ -14,7 +22,19 @@ const authenticateToken = (req, res, next) => {
             console.error('[AuthMiddleware] Token verification failed:', err.message);
             return res.sendStatus(401);
         }
-        req.user = user;
+        
+        // Normalize common keys to support both camelCase and lowercase property access
+        req.user = {
+            ...user,
+            userId: user.userId || user.userid,
+            userid: user.userid || user.userId,
+            buyerId: user.buyerId || user.buyerid,
+            buyerid: user.buyerid || user.buyerId,
+            supplierId: user.supplierId || user.supplierid,
+            supplierid: user.supplierid || user.supplierId,
+            subRole: user.subRole || user.subrole,
+            subrole: user.subrole || user.subRole
+        };
 
         // Context override headers for multi-tenancy (Secure)
         if (req.headers['x-supplier-id'] && req.headers['x-supplier-id'] !== 'undefined' && req.headers['x-supplier-id'] !== 'null') {

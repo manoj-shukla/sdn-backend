@@ -285,34 +285,24 @@ class ChangeRequestController {
                         if (val === '' || val === null) delete supp.proposed[key];
                     });
 
-                    // 4. Role-Based Permissions (Relaxed Visibility)
-                    // Everyone sees everything, but only specific roles can ACT.
+                    // 4. Role-Based Permissions (Strict Visibility)
+                    // Non-admins see ONLY items belonging to their role. This prevents
+                    // a single change (e.g. bank update) from appearing on every role's queue.
                     const userRole = user.subRole || user.role;
                     const isAdmin = ['Admin', 'Buyer Admin', 'ADMIN'].includes(userRole);
 
-                    // Mark items as Actionable if user has permission
-                    supp.items = supp.items.filter(i => i.status === 'PENDING').map(item => {
-                        const requiredRole = ChangeRequestService.getFieldRole(item.fieldName);
-                        let isActionable = false;
+                    supp.items = supp.items
+                        .filter(i => i.status === 'PENDING')
+                        .filter(item => {
+                            const requiredRole = ChangeRequestService.getFieldRole(item.fieldName);
+                            if (isAdmin) return true;
+                            if (!requiredRole || requiredRole === 'Admin') return false;
+                            return userRole.toLowerCase().includes(requiredRole.toLowerCase());
+                        })
+                        .map(item => ({ ...item, isActionable: true }));
 
-                        if (isAdmin) {
-                            isActionable = true;
-                        } else {
-                            // Allow 'Shared' items or Role Match
-                            const matchesRole = userRole.toLowerCase().includes(requiredRole.toLowerCase());
-                            isActionable = (requiredRole === 'Shared') || matchesRole;
-                        }
-
-                        return { ...item, isActionable };
-                    });
-
-                    // Filter out requests that have NO pending items at all (already handled in step 1 sort/latest logic, but good safety)
+                    // Hide the task entirely if this role has nothing to review for this supplier.
                     if (supp.items.length === 0) return null;
-
-                    // For non-admin users: hide the task once they have no actionable items left.
-                    // This prevents "ghost tasks" where Finance already approved their items
-                    // but the request still shows because Compliance hasn't acted yet.
-                    if (!isAdmin && !supp.items.some(i => i.isActionable)) return null;
 
                     // 5. Return Consolidated Object
                     return {
@@ -342,23 +332,19 @@ class ChangeRequestController {
 
             console.log(`[ChangeRequestController.getRequestDetails] Request ID: ${req.params.id}, keys: ${Object.keys(request)} `);
 
-            // RBAC: Relaxed Visibility - Show all, mark actionable
+            // RBAC: Strict Visibility - non-admins see ONLY items in their role scope.
             const userRole = req.user.subRole || req.user.role;
             const isAdmin = ['Admin', 'Buyer Admin', 'ADMIN'].includes(userRole);
 
             if (request.items) {
-                request.items = request.items.map(i => {
-                    const requiredRole = ChangeRequestService.getFieldRole(i.fieldName);
-                    let isActionable = false;
-
-                    if (isAdmin) {
-                        isActionable = true;
-                    } else {
-                        const matchesRole = userRole.toLowerCase().includes(requiredRole.toLowerCase());
-                        isActionable = (requiredRole === 'Shared') || matchesRole;
-                    }
-                    return { ...i, isActionable };
-                });
+                request.items = request.items
+                    .filter(i => {
+                        const requiredRole = ChangeRequestService.getFieldRole(i.fieldName);
+                        if (isAdmin) return true;
+                        if (!requiredRole || requiredRole === 'Admin') return false;
+                        return userRole.toLowerCase().includes(requiredRole.toLowerCase());
+                    })
+                    .map(i => ({ ...i, isActionable: true }));
             }
 
             res.json(request);

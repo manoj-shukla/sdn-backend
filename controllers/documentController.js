@@ -165,6 +165,41 @@ class DocumentController {
             res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     }
+    static async viewDocument(req, res) {
+        try {
+            const document = await DocumentService.getDocumentById(req.params.id);
+            if (!document) return res.status(404).json({ error: "Document not found" });
+
+            // Authorization: Suppliers can only see their own. Buyers can see their suppliers.
+            if (req.user.role === 'SUPPLIER' && document.supplierId !== (req.user.supplierId || req.user.supplierid)) {
+                return res.status(403).json({ error: "Forbidden: You cannot access this document" });
+            }
+
+            const path = require('path');
+            const fs = require('fs');
+            const fullPath = path.resolve(document.filePath);
+
+            if (!fs.existsSync(fullPath)) {
+                return res.status(404).json({ error: "File not found on server" });
+            }
+
+            // Determine content type
+            const ext = path.extname(fullPath).toLowerCase();
+            let contentType = 'application/octet-stream';
+            if (ext === '.pdf') contentType = 'application/pdf';
+            else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+            else if (ext === '.png') contentType = 'image/png';
+            else if (ext === '.doc' || ext === '.docx') contentType = 'application/msword';
+
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', `inline; filename="${path.basename(fullPath)}"`);
+
+            fs.createReadStream(fullPath).pipe(res);
+        } catch (e) {
+            console.error('[DocumentController.viewDocument] Error:', e);
+            res.status(500).json({ error: e.message });
+        }
+    }
 }
 
 module.exports = DocumentController;

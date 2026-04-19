@@ -150,7 +150,7 @@ class InvitationService {
                 const invitation = await this.verifyToken(token);
 
                 // 2. Check if user already exists
-                db.get("SELECT userId FROM sdn_users WHERE email = ?", [invitation.email], async (err, existingUser) => {
+                db.get("SELECT userid FROM sdn_users WHERE email = ?", [invitation.email], async (err, existingUser) => {
                     if (err) return reject(err);
 
                     const createSupplierAndMembership = (targetUserId) => {

@@ -16,6 +16,7 @@ router.get('/expiring', authenticateToken, DocumentController.getExpiring);
 router.get('/verification-summary/:supplierId', authenticateToken, DocumentController.getVerificationSummary);
 router.get('/supplier/:supplierId', authenticateToken, DocumentController.getSupplierDocuments);
 router.get('/:id', authenticateToken, DocumentController.getDocumentById);
+router.get('/:id/view', authenticateToken, DocumentController.viewDocument);
 router.put('/:id/verify', authenticateToken, DocumentController.verifyDocument);
 router.post('/:id/expiry', authenticateToken, DocumentController.setExpiry);
 router.post('/update-status/:documentId', authenticateToken, DocumentController.updateStatus);

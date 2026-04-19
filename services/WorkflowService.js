@@ -6,7 +6,34 @@ function determineReviewScope(stepName = '') {
     if (name.includes('compliance')) return 'COMPLIANCE';
     if (name.includes('finance')) return 'FINANCE';
     if (name.includes('ap') || name.includes('payable')) return 'AP';
+    if (name.includes('procurement') || name.includes('inviter') || name.includes('requestor')) return 'PROCUREMENT';
     return 'GENERAL';
+}
+
+// Map a step's scope to the field roles emitted by ChangeRequestService.getFieldRole
+// Used to filter supplier_change_items so approvers only see items relevant to their step.
+function stepScopeToFieldRole(stepName = '') {
+    const scope = determineReviewScope(stepName);
+    switch (scope) {
+        case 'COMPLIANCE': return 'Compliance';
+        case 'FINANCE': return 'Finance';
+        case 'AP': return 'AP';
+        case 'PROCUREMENT': return 'Procurement';
+        default: return null;
+    }
+}
+
+// Filter a list of supplier_change_items down to those belonging to the step's scope.
+// Returns the input unchanged when scope is unknown (GENERAL) so we don't accidentally hide work.
+function filterItemsByStepScope(items, stepName) {
+    if (!Array.isArray(items) || items.length === 0) return items || [];
+    const targetRole = stepScopeToFieldRole(stepName);
+    if (!targetRole) return items;
+    const ChangeRequestService = require('./ChangeRequestService');
+    return items.filter(i => {
+        const fieldRole = ChangeRequestService.getFieldRole(i.fieldName || i.fieldname);
+        return fieldRole && fieldRole.toLowerCase() === targetRole.toLowerCase();
+    });
 }
 
 class WorkflowService {
@@ -39,7 +66,7 @@ class WorkflowService {
                 if (err) return reject(err);
                 if (!role) return resolve(); // Already gone
 
-                db.get("SELECT COUNT(*) as count FROM sdn_users WHERE \"subrole\" = $1", [role.rolename], (err, user) => {
+                db.get("SELECT COUNT(*) as count FROM sdn_users WHERE subrole = $1", [role.rolename], (err, user) => {
                     if (err) return reject(err);
                     if (user && parseInt(user.count) > 0) {
                         const error = new Error(`Cannot delete role: ${user.count} user(s) are assigned to it.`);
@@ -523,17 +550,39 @@ class WorkflowService {
      * Parallel Update Workflow
      * Initiates fixed steps for profile updates, all starting in PENDING status.
      */
-    static async initiateUpdateWorkflow(supplierId, buyerId) {
+    static async initiateUpdateWorkflow(supplierId, buyerId, roleKeywords = null) {
         // 1. Define required roles for parallel review
-        const roleNames = ['Procurement Reviewer', 'Finance Reviewer', 'Compliance Reviewer', 'AP Admin'];
+        let baseRoles = ['Procurement Reviewer', 'Finance Reviewer', 'Compliance Reviewer', 'AP Admin'];
+        let roleNames = baseRoles;
+
+        if (roleKeywords && roleKeywords.length > 0) {
+            // Handle special cases
+            const normalizedKeywords = roleKeywords.map(k => k.toLowerCase());
+            
+            if (normalizedKeywords.includes('shared')) {
+                // Documents or shared fields: Compliance and Procurement usually handle these
+                roleNames = baseRoles.filter(rn => rn.includes('Compliance') || rn.includes('Procurement'));
+            } else if (normalizedKeywords.includes('admin')) {
+                roleNames = baseRoles; // Keep all for admin-level changes
+            } else {
+                // Filter by specific keywords (Finance, AP, etc.)
+                roleNames = baseRoles.filter(rn => 
+                    normalizedKeywords.some(kw => rn.toLowerCase().includes(kw))
+                );
+            }
+        }
+
+        // If filtering resulted in no roles, fallback to Procurement
+        if (roleNames.length === 0) roleNames = ['Procurement Reviewer'];
+
         const placeholders = roleNames.map(() => 'LOWER(?)').join(',');
 
-        // 2. Resolve Role IDs for this buyer using fuzzy matching (keywords)
+        // 2. Resolve Role IDs for this buyer
         const roles = await new Promise((resolve, reject) => {
             const conditions = roleNames.map(() => 'LOWER(roleName) LIKE ?').join(' OR ');
             db.all(
                 `SELECT roleid, rolename FROM buyer_roles WHERE buyerid = ? AND (${conditions})`,
-                [buyerId, ...roleNames.map(r => `%${r.split(' ')[0].toLowerCase()}%`)], // Match by first word (Procurement, Finance, etc.)
+                [buyerId, ...roleNames.map(r => `%${r.split(' ')[0].toLowerCase()}%`)],
                 (err, rows) => err ? reject(err) : resolve(rows)
             );
         });
@@ -741,9 +790,9 @@ class WorkflowService {
             if (isElevated) {
                 const sql = `
                     SELECT 
-                        si.stepInstanceId, si.instanceId, si.stepOrder, si.stepName, si.status, si.assignedRoleId,
+                        si.stepinstanceid, si.instanceid, si.steporder, si.stepname, si.status, si.assignedroleid,
                         CASE WHEN wi.workflowtemplateid = 0 THEN 'Change Request' ELSE w.name END as "workflowName", 
-                        s.legalName as "supplierName", s.supplierId as "supplierId", 
+                        s.legalname as "supplierName", s.supplierid as "supplierId", 
                         s.bankname as "bankName", s.accountnumber as "accountNumber", s.taxid as "taxId", s.isgstregistered as "isGstRegistered", s.gstin,
                         s.country, s.website, s.description,
                         wi.startedat as "startedAt", wi.submissiontype as "submissionType",
@@ -836,7 +885,11 @@ class WorkflowService {
                                 documents: typeof r.documents === 'string' ? JSON.parse(r.documents) : (r.documents || []),
                                 addresses: typeof r.addresses === 'string' ? JSON.parse(r.addresses) : (r.addresses || []),
                                 contacts: typeof r.contacts === 'string' ? JSON.parse(r.contacts) : (r.contacts || []),
-                                items: typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || []),
+                                items: (() => {
+                                    const parsed = typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || []);
+                                    // Scope items so each step only shows the changes it's responsible for.
+                                    return filterItemsByStepScope(parsed, r.stepName || r.stepname);
+                                })(),
                                 reviewScope: determineReviewScope(r.stepName || r.stepname)
                             };
                             return task;
@@ -866,25 +919,25 @@ class WorkflowService {
 
                 const sql = `
                     SELECT 
-                        si.stepInstanceId as "stepInstanceId", 
-                        si.instanceId as "instanceId", 
-                        si.stepOrder as "stepOrder", 
-                        si.stepName as "stepName", 
+                        si.stepinstanceid as "stepInstanceId", 
+                        si.instanceid as "instanceId", 
+                        si.steporder as "stepOrder", 
+                        si.stepname as "stepName", 
                         si.status as "status", 
-                        si.assignedRoleId as "assignedRoleId",
+                        si.assignedroleid as "assignedRoleId",
                         CASE WHEN wi.workflowtemplateid = 0 THEN 'Change Request' ELSE w.name END as "workflowName", 
-                        s.legalName as "supplierName", 
-                        s.supplierId as "supplierId", 
-                        s.bankName as "bankName", 
-                        s.accountNumber as "accountNumber", 
-                        s.taxId as "taxId", 
-                        s.isGstRegistered as "isGstRegistered", 
+                        s.legalname as "supplierName", 
+                        s.supplierid as "supplierId", 
+                        s.bankname as "bankName", 
+                        s.accountnumber as "accountNumber", 
+                        s.taxid as "taxId", 
+                        s.isgstregistered as "isGstRegistered", 
                         s.gstin,
                         s.country, 
                         s.website, 
                         s.description,
-                        wi.startedAt as "startedAt", 
-                        wi.submissionType as "submissionType",
+                        wi.startedat as "startedAt", 
+                        wi.submissiontype as "submissionType",
                         (
                             SELECT json_agg(json_build_object(
                                 'documentId', d.documentid,
@@ -993,7 +1046,11 @@ class WorkflowService {
                                 documents: (canViewCompliance || canViewFinance) ? (typeof r.documents === 'string' ? JSON.parse(r.documents) : (r.documents || [])) : [],
                                 addresses: typeof r.addresses === 'string' ? JSON.parse(r.addresses) : (r.addresses || []),
                                 contacts: typeof r.contacts === 'string' ? JSON.parse(r.contacts) : (r.contacts || []),
-                                items: typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || []),
+                                items: (() => {
+                                    const parsed = typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || []);
+                                    // Scope items so each step only shows the changes it's responsible for.
+                                    return filterItemsByStepScope(parsed, r.stepName || r.stepname);
+                                })(),
                                 reviewScope: determineReviewScope(r.stepName || r.stepname)
                             };
                             console.log(`[WorkflowService] Task mapped: ID=${task.instanceId}, Supplier="${task.supplierName}", Type=${task.submissionType}`);

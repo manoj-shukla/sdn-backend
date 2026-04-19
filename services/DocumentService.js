@@ -281,10 +281,12 @@ class DocumentService {
                             async (err) => {
                                 if (err) return reject(err);
 
-                                // Notify approvers
+                                // Notify approvers — document uploads are Compliance-only.
+                                // Passing ['Compliance'] prevents the workflow from fanning out
+                                // to Procurement / Finance / AP, which don't review documents.
                                 try {
                                     const WorkflowService = require('./WorkflowService');
-                                    await WorkflowService.initiateUpdateWorkflow(supplierId, buyerId);
+                                    await WorkflowService.initiateUpdateWorkflow(supplierId, buyerId, ['Compliance']);
                                     await ChangeRequestService.notifyRelevantApprovers(requestId, buyerId, supplierId, user.userId);
                                 } catch (e) {
                                     console.error("[DocumentService] Notification error:", e);
@@ -341,8 +343,99 @@ class DocumentService {
     }
 
     static async deleteDocument(id) {
+        // The supplier portal surfaces two kinds of rows as "documents":
+        //   * real documents (positive documentId) — stored in the documents table
+        //   * pending upload change-items (negative pseudo-id = -itemId) — stored in
+        //     supplier_change_items because approved-supplier uploads go through the
+        //     change-request workflow.
+        //
+        // Previously this function always ran `DELETE FROM documents WHERE documentid = ?`,
+        // which silently no-op'd for negative ids — the UI would refetch and the doc
+        // reappeared. We now branch on the sign of the id.
+        const numericId = Number(id);
+
+        if (Number.isFinite(numericId) && numericId < 0) {
+            const itemId = Math.abs(numericId);
+
+            // 1. Load the change-item so we can find its parent request
+            const item = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT itemid, requestid, status FROM supplier_change_items WHERE itemid = ?`,
+                    [itemId],
+                    (err, row) => err ? reject(err) : resolve(row)
+                );
+            });
+
+            if (!item) {
+                // Already gone — treat as success (idempotent delete)
+                return;
+            }
+
+            const requestId = item.requestid || item.requestId;
+
+            // 2. Cancel the item (use REJECTED status so any workflow listeners recompute state)
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE supplier_change_items SET status = 'REJECTED', rejectionreason = 'Withdrawn by supplier', reviewedat = CURRENT_TIMESTAMP WHERE itemid = ?`,
+                    [itemId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+
+            // 3. If the parent request has no remaining PENDING items, close it
+            //    and cancel its pending workflow so approvers stop seeing the task.
+            const pendingCount = await new Promise((resolve) => {
+                db.get(
+                    `SELECT COUNT(*) as count FROM supplier_change_items WHERE requestid = ? AND status = 'PENDING'`,
+                    [requestId],
+                    (err, row) => resolve(row ? (row.count || row.COUNT || 0) : 0)
+                );
+            });
+
+            if (Number(pendingCount) === 0 && requestId) {
+                // Load supplier info for workflow cancellation
+                const reqRow = await new Promise((resolve) => {
+                    db.get(
+                        `SELECT supplierid FROM supplier_change_requests WHERE requestid = ?`,
+                        [requestId],
+                        (err, row) => resolve(row)
+                    );
+                });
+
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `UPDATE supplier_change_requests SET status = 'REJECTED', rejectionreason = 'Withdrawn by supplier', reviewedat = CURRENT_TIMESTAMP WHERE requestid = ?`,
+                        [requestId],
+                        (err) => err ? reject(err) : resolve()
+                    );
+                });
+
+                // Cancel any pending update workflow for this supplier so Compliance's
+                // queue no longer shows a ghost task.
+                const supplierId = reqRow && (reqRow.supplierid || reqRow.supplierId);
+                if (supplierId) {
+                    await new Promise((resolve) => {
+                        db.run(
+                            `UPDATE workflow_instances
+                             SET status = 'CANCELLED'
+                             WHERE supplierid = ? AND submissiontype = 'UPDATE' AND status = 'PENDING'
+                               AND NOT EXISTS (
+                                   SELECT 1 FROM supplier_change_items sci
+                                   JOIN supplier_change_requests scr ON sci.requestid = scr.requestid
+                                   WHERE scr.supplierid = ? AND sci.status = 'PENDING'
+                               )`,
+                            [supplierId, supplierId],
+                            () => resolve()
+                        );
+                    });
+                }
+            }
+            return;
+        }
+
+        // Real document row — hard delete as before.
         return new Promise((resolve, reject) => {
-            db.run("DELETE FROM documents WHERE documentid = ?", [id], (err) => err ? reject(err) : resolve());
+            db.run("DELETE FROM documents WHERE documentid = ?", [numericId], (err) => err ? reject(err) : resolve());
         });
     }
 
@@ -418,7 +511,7 @@ class DocumentService {
                 function (err) {
                     if (err) return reject(err);
                     const docId = this.lastID;
-                    db.get("SELECT documentid as \"documentId\", supplierid as \"supplierId\", documenttype as \"documentType\", documentname as \"documentName\", expirydate as \"expiryDate\", verificationstatus as \"verificationStatus\", notes, uploadedbyuserid as \"uploadedByUserId\", uploadedbyusername as \"uploadedByUserName\" FROM documents WHERE documentid = ?", [docId], (err, row) => resolve(row));
+                    db.get("SELECT documentid as \"documentId\", supplierid as \"supplierId\", documenttype as \"documentType\", documentname as \"documentName\", expirydate as \"expiryDate\", verificationstatus as \"verificationStatus\", notes, uploadedbyuserid as \"uploadedByUserId\", uploadedbyusername as \"uploadedByUsername\" FROM documents WHERE documentid = ?", [docId], (err, row) => resolve(row));
                 }
             );
         });
@@ -465,8 +558,51 @@ class DocumentService {
     }
 
     static async getDocumentById(id) {
+        const numericId = Number(id);
+
+        // Negative pseudo-ids point at pending supplier_change_items rows — the
+        // file itself exists on disk (multer already saved it under uploads/)
+        // but there's no `documents` row yet because the upload is awaiting
+        // Compliance approval. We reconstruct the metadata from the stored
+        // JSON in `newvalue` so preview / view endpoints can stream the file.
+        if (Number.isFinite(numericId) && numericId < 0) {
+            const itemId = Math.abs(numericId);
+            return new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT i.itemid, i.newvalue, i.status, r.supplierid
+                     FROM supplier_change_items i
+                     JOIN supplier_change_requests r ON i.requestid = r.requestid
+                     WHERE i.itemid = ? AND i.fieldname = 'documents'`,
+                    [itemId],
+                    (err, row) => {
+                        if (err) return reject(err);
+                        if (!row) return resolve(null);
+                        try {
+                            const meta = JSON.parse(row.newvalue || row.newValue || '{}');
+                            resolve({
+                                documentId: numericId,
+                                supplierId: row.supplierid || row.supplierId,
+                                documentType: meta.documentType,
+                                documentName: meta.documentName,
+                                filePath: meta.filePath,
+                                fileSize: meta.fileSize,
+                                fileType: meta.fileType,
+                                verificationStatus: row.status === 'PENDING' ? 'PENDING_APPROVAL' : row.status,
+                                expiryDate: meta.expiryDate,
+                                complianceStatus: DocumentService.getComplianceStatus(meta.expiryDate),
+                                notes: meta.notes,
+                                uploadedByUserId: meta.uploadedByUserId
+                            });
+                        } catch (e) {
+                            resolve(null);
+                        }
+                    }
+                );
+            });
+        }
+
         return new Promise((resolve, reject) => {
-            db.get("SELECT * FROM documents WHERE documentid = ?", [id], (err, row) => {
+            db.get("SELECT * FROM documents WHERE documentid = ?", [numericId], (err, row) => {
                 if (err) return reject(err);
                 if (!row) return resolve(null);
                 const expiryDate = row.expirydate || row.expiryDate;

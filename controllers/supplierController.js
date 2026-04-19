@@ -18,7 +18,8 @@ class SupplierController {
     static async getSupplierById(req, res) {
         try {
             const result = await SupplierService.getSupplierById(req.params.id, req.user);
-            if (!result) return res.status(404).json({ error: "Supplier not found" });
+            if (!result) return res.status(404).json({ error: "Supplier not found", code: "NOT_FOUND" });
+            if (result.__accessDenied) return res.status(403).json({ error: "You do not have permission to view this supplier.", code: "ACCESS_DENIED" });
             res.json(result);
         } catch (err) { res.status(500).json({ error: err.message }); }
     }

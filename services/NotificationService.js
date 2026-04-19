@@ -2,17 +2,29 @@ const db = require('../config/database');
 
 class NotificationService {
     static async getNotifications(query) {
-        const { recipientRole } = query;
+        // Accept either a single role (string) via recipientRole, or multiple roles
+        // via recipientRoles (array). Role-scoped notifications (Finance / Compliance /
+        // Procurement / AP / Buyer Admin) live alongside the generic BUYER/SUPPLIER ones,
+        // so a buyer user needs to see their subRole + Buyer Admin + BUYER at the same time.
+        const recipientRoles = Array.isArray(query.recipientRoles)
+            ? query.recipientRoles.filter(Boolean)
+            : (query.recipientRole ? [query.recipientRole] : []);
+
         // Ensure IDs are parsed as integers to avoid type mismatch with INTEGER columns
         const supplierId = query.supplierId ? parseInt(query.supplierId, 10) : null;
         const buyerId = query.buyerId ? parseInt(query.buyerId, 10) : null;
+
         return new Promise((resolve, reject) => {
-            let sql = `SELECT notificationid, type, message, entityid, recipientrole, isread, createdat FROM notifications WHERE 1=1`;
+            let sql = `SELECT notificationid, type, message, entityid, recipientrole, supplierid, buyerid, isread, createdat FROM notifications WHERE 1=1`;
             const params = [];
 
-            if (recipientRole) {
+            if (recipientRoles.length === 1) {
                 sql += ` AND recipientrole = ?`;
-                params.push(recipientRole);
+                params.push(recipientRoles[0]);
+            } else if (recipientRoles.length > 1) {
+                const placeholders = recipientRoles.map(() => '?').join(', ');
+                sql += ` AND recipientrole IN (${placeholders})`;
+                params.push(...recipientRoles);
             }
             if (supplierId) {
                 sql += ` AND supplierid = ?`;

@@ -38,7 +38,8 @@ class SupplierService {
             let params = [];
 
             const userRole = (user.role || '').toUpperCase();
-            const buyerId = user.buyerId;
+            const buyerId = user.buyerId || user.buyerid;
+            const userId = user.userId || user.userid;
 
             console.log(`[SupplierService.getAllSuppliers] Role: ${userRole}, BuyerId: ${buyerId}`);
 
@@ -117,7 +118,8 @@ class SupplierService {
 
     static async getSupplierById(id, user) {
         const queries = {
-            supplier: `SELECT * FROM suppliers WHERE supplierid = ?`,
+            // Also fetch createdbyuserid so we can apply the same RBAC check as getAllSuppliers
+            supplier: `SELECT s.*, u.buyerid as creator_buyerid FROM suppliers s LEFT JOIN sdn_users u ON s.createdbyuserid = u.userid WHERE s.supplierid = ?`,
             address: `SELECT * FROM addresses WHERE supplierid = ? ORDER BY isprimary DESC`,
             contacts: `SELECT userid, email, role, subrole FROM sdn_users WHERE supplierid = ?`
         };
@@ -166,12 +168,25 @@ class SupplierService {
                             return resolve(null); // Return null to simulate 404
                         }
                     } else if (user.role === 'BUYER' && user.buyerId) {
-                        // Buyer users can only access their suppliers
+                        // Mirror the same dual-path RBAC used in getAllSuppliers:
+                        //   1. Supplier's buyerid matches the logged-in buyer (direct ownership)
+                        //   2. Supplier was created by a user who belongs to this buyer (createdbyuserid path)
+                        // This ensures the detail page never blocks a supplier that is visible in the directory.
                         const supplierBuyerId = parseInt(s.buyerId);
-                        const userBuyerId = parseInt(user.buyerId);
-                        if (supplierBuyerId !== userBuyerId) {
-                            console.warn(`[SupplierService] Access Denied: Buyer User ${user.userId} (Buyer: ${userBuyerId}) tried to access Supplier ${id} (Buyer: ${supplierBuyerId})`);
-                            return resolve(null); // Return null to simulate 404
+                        const userBuyerId = parseInt(user.buyerId || user.buyerid);
+                        const userId = parseInt(user.userId || user.userid);
+                        const creatorBuyerId = parseInt(row.creator_buyerid); // from JOIN on createdbyuserid
+
+                        const ownedByBuyer    = !isNaN(supplierBuyerId) && supplierBuyerId === userBuyerId;
+                        const createdByBuyer  = !isNaN(creatorBuyerId)  && creatorBuyerId  === userBuyerId;
+                        const unassigned      = isNaN(supplierBuyerId); // buyerid is NULL in DB
+
+                        if (!ownedByBuyer && !createdByBuyer && !unassigned) {
+                            console.warn(`[SupplierService] Access Denied: Buyer User ${user.userId} (Buyer: ${userBuyerId}) tried to access Supplier ${id} (Buyer: ${supplierBuyerId}, CreatorBuyer: ${creatorBuyerId})`);
+                            return resolve({ __accessDenied: true });
+                        }
+                        if (unassigned) {
+                            console.warn(`[SupplierService] Warning: Supplier ${id} has no buyerid. Allowing Buyer ${userBuyerId} access via directory parity.`);
                         }
                     }
                 }
@@ -283,7 +298,64 @@ class SupplierService {
                     isPrimary: !!(row.isprimary || row.isPrimary),
                     status: row.status
                 }));
-                resolve(normalized);
+
+                if (normalized.length > 0) {
+                    return resolve(normalized);
+                }
+
+                // Fallback: onboarding used PUT /api/suppliers/:id which persists
+                // bank details into legacy columns on the suppliers table, not
+                // into the normalized bank_accounts table. If bank_accounts is
+                // empty but the supplier row has bank info, surface that data
+                // (and opportunistically migrate it into bank_accounts so
+                // subsequent reads/updates use the canonical table).
+                db.get(
+                    `SELECT supplierid, bankname, accountnumber, routingnumber FROM suppliers WHERE supplierid = ?`,
+                    [supplierId],
+                    (e2, sRow) => {
+                        if (e2 || !sRow) return resolve([]);
+                        const bankName = sRow.bankname || sRow.bankName;
+                        const accountNumber = sRow.accountnumber || sRow.accountNumber;
+                        const routingNumber = sRow.routingnumber || sRow.routingNumber;
+                        if (!bankName && !accountNumber) return resolve([]);
+
+                        // Attempt migration (best-effort; return the synthetic
+                        // account either way so the UI shows the data now).
+                        db.all(
+                            `INSERT INTO bank_accounts (supplierid, bankname, accountnumber, routingnumber, currency, isprimary, status)
+                             VALUES (?, ?, ?, ?, 'USD', TRUE, 'ACTIVE') RETURNING *`,
+                            [supplierId, bankName, accountNumber, routingNumber || null],
+                            (insErr, insRows) => {
+                                const row = (insRows && insRows[0]) || null;
+                                const account = row ? {
+                                    ...row,
+                                    bankId: row.bankid || row.bankId,
+                                    supplierId: row.supplierid || row.supplierId,
+                                    bankName: row.bankname || row.bankName,
+                                    accountNumber: row.accountnumber || row.accountNumber,
+                                    routingNumber: row.routingnumber || row.routingNumber,
+                                    swiftCode: row.swiftcode || row.swiftCode,
+                                    currency: row.currency,
+                                    isPrimary: !!(row.isprimary || row.isPrimary),
+                                    status: row.status
+                                } : {
+                                    // Migration failed — still surface a synthetic row
+                                    // so the onboarding bank details are visible.
+                                    bankId: 0,
+                                    supplierId: Number(supplierId),
+                                    bankName,
+                                    accountNumber,
+                                    routingNumber: routingNumber || '',
+                                    swiftCode: '',
+                                    currency: 'USD',
+                                    isPrimary: true,
+                                    status: 'ACTIVE'
+                                };
+                                resolve([account]);
+                            }
+                        );
+                    }
+                );
             });
         });
     }
@@ -462,7 +534,75 @@ class SupplierService {
                 // Automatic transition to SUBMITTED upon any profile update is removed
                 // to allow explicit final submission by the user.
 
-                db.get("SELECT * FROM suppliers WHERE supplierid = ?", [id], (err, row) => resolve(row));
+                // Sync bank_accounts table when bank fields are provided during
+                // onboarding or regular profile edits (non-APPROVED flow).
+                // The onboarding flow sends bankName/accountNumber/routingNumber
+                // via PUT /api/suppliers/:id, which previously only hit the
+                // legacy suppliers columns. To keep the normalized table in
+                // sync (so the portal's /bank-accounts endpoint surfaces the
+                // data), upsert a primary bank_accounts row here.
+                const syncBankAccounts = (done) => {
+                    if (!bankName && !accountNumber && !routingNumber) return done();
+
+                    db.get(
+                        `SELECT bankid, bankname, accountnumber, routingnumber FROM bank_accounts
+                         WHERE supplierid = ? AND isprimary = TRUE
+                         ORDER BY bankid ASC LIMIT 1`,
+                        [id],
+                        (selErr, existing) => {
+                            if (selErr) {
+                                console.warn('[SupplierService.updateSupplier] bank_accounts select failed:', selErr.message);
+                                return done();
+                            }
+
+                            if (existing && (existing.bankid || existing.bankId)) {
+                                const bId = existing.bankid || existing.bankId;
+                                db.run(
+                                    `UPDATE bank_accounts
+                                     SET bankname = COALESCE(?, bankname),
+                                         accountnumber = COALESCE(?, accountnumber),
+                                         routingnumber = COALESCE(?, routingnumber),
+                                         updatedat = CURRENT_TIMESTAMP
+                                     WHERE bankid = ?`,
+                                    [bankName || null, accountNumber || null, routingNumber || null, bId],
+                                    (uErr) => {
+                                        if (uErr) console.warn('[SupplierService.updateSupplier] bank_accounts update failed:', uErr.message);
+                                        done();
+                                    }
+                                );
+                            } else {
+                                // No primary row yet — insert one using the
+                                // currently-known values, falling back to the
+                                // freshly-written suppliers row columns so we
+                                // never insert all-NULLs.
+                                db.get(
+                                    `SELECT bankname, accountnumber, routingnumber FROM suppliers WHERE supplierid = ?`,
+                                    [id],
+                                    (sErr, sRow) => {
+                                        const effBank = bankName || (sRow && (sRow.bankname || sRow.bankName));
+                                        const effAcct = accountNumber || (sRow && (sRow.accountnumber || sRow.accountNumber));
+                                        const effRout = routingNumber || (sRow && (sRow.routingnumber || sRow.routingNumber));
+                                        if (!effBank && !effAcct) return done();
+
+                                        db.run(
+                                            `INSERT INTO bank_accounts (supplierid, bankname, accountnumber, routingnumber, currency, isprimary, status)
+                                             VALUES (?, ?, ?, ?, 'USD', TRUE, 'ACTIVE')`,
+                                            [id, effBank || null, effAcct || null, effRout || null],
+                                            (iErr) => {
+                                                if (iErr) console.warn('[SupplierService.updateSupplier] bank_accounts insert failed:', iErr.message);
+                                                done();
+                                            }
+                                        );
+                                    }
+                                );
+                            }
+                        }
+                    );
+                };
+
+                syncBankAccounts(() => {
+                    db.get("SELECT * FROM suppliers WHERE supplierid = ?", [id], (err, row) => resolve(row));
+                });
             });
         });
     }

@@ -22,8 +22,9 @@ class ChangeRequestService {
         const normalised = fieldName.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
         const lower = normalised.toLowerCase();
 
-        // Generic document field is shared across roles
-        if (lower === 'documents') return 'Shared';
+        // Documents are reviewed by Compliance only (strict routing).
+        // Previously marked 'Shared' which fanned out to multiple roles.
+        if (lower === 'documents') return 'Compliance';
 
         // Finance: banking, tax, payment identifiers — mirrors the frontend regex
         // /bank|account|tax|gst|pan|swift|ifsc|beneficiar|routing|cheque|msme/i
@@ -44,7 +45,7 @@ class ChangeRequestService {
     static async createChangeRequest(supplierId, updates, user) {
         // 1. Fetch Current Data
         const currentData = await new Promise((resolve, reject) => {
-            db.get(`SELECT * FROM suppliers WHERE supplierId = ?`, [supplierId], (err, row) => {
+            db.get(`SELECT * FROM suppliers WHERE supplierid = ?`, [supplierId], (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
@@ -91,7 +92,7 @@ class ChangeRequestService {
         }
 
         return new Promise((resolve, reject) => {
-            db.run(`INSERT INTO supplier_change_requests (supplierId, requestType, status, requestedByUserId, buyerId) VALUES (?, ?, ?, ?, ?)`,
+            db.run(`INSERT INTO supplier_change_requests (supplierid, requesttype, status, requestedbyuserid, buyerid) VALUES (?, ?, ?, ?, ?)`,
                 [supplierId, 'PROFILE_UPDATE', status, user.userId, buyerId],
                 function (err) {
                     if (err) return reject(err);
@@ -100,7 +101,7 @@ class ChangeRequestService {
                     // 4. Insert Items
                     const itemPromises = changes.map(change => {
                         return new Promise((res, rej) => {
-                            db.run(`INSERT INTO supplier_change_items (requestId, fieldName, oldValue, newValue, changeCategory, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                            db.run(`INSERT INTO supplier_change_items (requestid, fieldname, oldvalue, newvalue, changecategory, status) VALUES (?, ?, ?, ?, ?, ?)`,
                                 [requestId, change.fieldName, change.oldValue, change.newValue, change.changeCategory, status === 'APPROVED' ? 'APPROVED' : 'PENDING'],
                                 (e) => e ? rej(e) : res()
                             );
@@ -119,7 +120,8 @@ class ChangeRequestService {
                         } else {
                             // 6. Initiate Parallel Workflow Tasks
                             const WorkflowService = require('./WorkflowService');
-                            await WorkflowService.initiateUpdateWorkflow(supplierId, buyerId);
+                            const requiredRoles = new Set(changes.map(c => this.getFieldRole(c.fieldName)));
+                            await WorkflowService.initiateUpdateWorkflow(supplierId, buyerId, Array.from(requiredRoles));
 
                             // 7. Notify ALL relevant approvers immediately (Parallel Flow)
                             await ChangeRequestService.notifyRelevantApprovers(requestId, buyerId, supplierId, user.userId);
@@ -139,7 +141,7 @@ class ChangeRequestService {
     static async notifyRelevantApprovers(requestId, buyerId, supplierId, initiatorId) {
         // 1. Get all PENDING items
         const pendingItems = await new Promise((resolve, reject) => {
-            db.all(`SELECT fieldName as "fieldName" FROM supplier_change_items WHERE requestId = ? AND status = 'PENDING'`,
+            db.all(`SELECT fieldname as "fieldName" FROM supplier_change_items WHERE requestid = ? AND status = 'PENDING'`,
                 [requestId], (err, rows) => err ? reject(err) : resolve(rows || []));
         });
 
@@ -147,21 +149,41 @@ class ChangeRequestService {
             return;
         }
 
-        // 2. Identify Unique Roles that still have work
-        const requiredRoles = new Set();
+        // 2. Fetch supplier name for richer notification copy
+        const supplierRow = await new Promise((resolve) => {
+            db.get(`SELECT legalname FROM suppliers WHERE supplierid = ?`, [supplierId], (err, row) => resolve(row || null));
+        });
+        const supplierName = (supplierRow && (supplierRow.legalname || supplierRow.legalName)) || `Supplier #${supplierId}`;
+
+        // 3. Group items by required role so each role's notification describes
+        //    only the category they're responsible for.
+        const itemsByRole = new Map();
         pendingItems.forEach(item => {
             const name = item.fieldname || item.fieldName;
-            requiredRoles.add(this.getFieldRole(name));
+            const role = this.getFieldRole(name);
+            if (!role || role === 'Admin') return;
+            if (!itemsByRole.has(role)) itemsByRole.set(role, []);
+            itemsByRole.get(role).push(name);
         });
 
-        // 3. Send Notifications to EACH role simultaneously
+        const categoryLabel = (role) => {
+            switch (role) {
+                case 'Finance':     return 'bank / finance details';
+                case 'Compliance':  return 'compliance documents or legal details';
+                case 'Procurement': return 'company profile details';
+                case 'AP':          return 'payment / invoicing details';
+                default:            return 'profile details';
+            }
+        };
+
+        // 4. Send notifications to EACH role simultaneously
         const notificationPromises = [];
 
-        for (const role of requiredRoles) {
-            console.log(`[ChangeRequest] Notifying ${role} for Request ${requestId}`);
+        for (const [role, fields] of itemsByRole.entries()) {
+            console.log(`[ChangeRequest] Notifying ${role} for Request ${requestId} (${fields.length} items)`);
             notificationPromises.push(NotificationService.createNotification({
                 type: 'CHANGE_REQUEST_PENDING',
-                message: `Change request pending for ${pendingItems.length} fields. Your review is required.`,
+                message: `${supplierName} submitted an update to ${categoryLabel(role)} (${fields.length} field${fields.length === 1 ? '' : 's'}). Your review is required.`,
                 entityId: requestId,
                 recipientRole: role,
                 supplierId: supplierId,
@@ -169,12 +191,22 @@ class ChangeRequestService {
             }));
         }
 
-        // 4. ALWAYS Notify Buyer Admin / Admin
+        // 5. ALWAYS notify Buyer Admin for oversight
         notificationPromises.push(NotificationService.createNotification({
             type: 'CHANGE_REQUEST_INITIATED',
-            message: `A change request has been initiated for a supplier. Tracking ID: #${requestId}.`,
+            message: `${supplierName} initiated a change request (#${requestId}) covering ${Array.from(itemsByRole.keys()).join(', ') || 'profile details'}.`,
             entityId: requestId,
             recipientRole: 'Buyer Admin',
+            supplierId: supplierId,
+            buyerId: buyerId
+        }));
+
+        // 6. Confirmation back to the supplier so they can see their submission was received.
+        notificationPromises.push(NotificationService.createNotification({
+            type: 'CHANGE_REQUEST_SUBMITTED',
+            message: `Your change request #${requestId} has been submitted for review. You'll be notified once approvers take action.`,
+            entityId: requestId,
+            recipientRole: 'SUPPLIER',
             supplierId: supplierId,
             buyerId: buyerId
         }));
@@ -190,7 +222,7 @@ class ChangeRequestService {
         // 1. Update Items
         for (const itemId of itemIds) {
             await new Promise((resolve, reject) => {
-                db.run(`UPDATE supplier_change_items SET status = 'APPROVED', reviewedByUserId = ?, reviewedAt = CURRENT_TIMESTAMP WHERE itemId = ?`,
+                db.run(`UPDATE supplier_change_items SET status = 'APPROVED', reviewedbyuserid = ?, reviewedat = CURRENT_TIMESTAMP WHERE itemid = ?`,
                     [approverId, itemId], (err) => err ? reject(err) : resolve());
             });
         }
@@ -200,7 +232,7 @@ class ChangeRequestService {
 
     static async rejectChangeItem(requestId, itemId, approverId, reason) {
         await new Promise((resolve, reject) => {
-            db.run(`UPDATE supplier_change_items SET status = 'REJECTED', rejectionReason = ?, reviewedByUserId = ?, reviewedAt = CURRENT_TIMESTAMP WHERE itemId = ?`,
+            db.run(`UPDATE supplier_change_items SET status = 'REJECTED', rejectionreason = ?, reviewedbyuserid = ?, reviewedat = CURRENT_TIMESTAMP WHERE itemid = ?`,
                 [reason || null, approverId, itemId], (err) => err ? reject(err) : resolve());
         });
 
@@ -210,7 +242,11 @@ class ChangeRequestService {
     static async checkRequestCompletion(requestId, approverId) {
         // Check Remaining Status
         const request = await this.getChangeRequestById(requestId);
-        const pendingItems = request.items.filter(i => i.status === 'PENDING');
+        if (!request) {
+            // Request was already finalized or cleaned up by a parallel approver — nothing to do.
+            return { status: "COMPLETED", message: "Request already finalized." };
+        }
+        const pendingItems = (request.items || []).filter(i => i.status === 'PENDING');
 
         if (pendingItems.length === 0) {
             // ALL HANDLED (Approved or Rejected) -> Finalize
@@ -227,12 +263,16 @@ class ChangeRequestService {
 
     static async finalizeRequest(requestId, supplierId, approverId) {
         const request = await this.getChangeRequestById(requestId);
+        if (!request) {
+            // Already finalized or non-existent; nothing to apply.
+            return { updates: {} };
+        }
 
         // Separate document items from field-level items
         const fieldUpdates = {};
         const documentItems = [];
 
-        request.items.forEach(item => {
+        (request.items || []).forEach(item => {
             // ONLY process APPROVED items
             if (item.status !== 'APPROVED') return;
 
@@ -391,7 +431,7 @@ class ChangeRequestService {
             values.push(supplierId);
 
             await new Promise((resolve, reject) => {
-                db.run(`UPDATE suppliers SET ${setClause} WHERE supplierId = ?`, values, (err) => err ? reject(err) : resolve());
+                db.run(`UPDATE suppliers SET ${setClause} WHERE supplierid = ?`, values, (err) => err ? reject(err) : resolve());
             });
         }
 
@@ -401,7 +441,7 @@ class ChangeRequestService {
                 const doc = JSON.parse(docJson);
                 await new Promise((resolve, reject) => {
                     db.run(
-                        `INSERT INTO documents (supplierId, documentType, documentName, filePath, fileSize, fileType, verificationStatus, notes, uploadedByUserId, uploadedByUsername) 
+                        `INSERT INTO documents (supplierid, documenttype, documentname, filepath, filesize, filetype, verificationstatus, notes, uploadedbyuserid, uploadedbyusername) 
                          VALUES (?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, ?)`,
                         [supplierId, doc.documentType, doc.documentName, doc.filePath, doc.fileSize, doc.fileType, doc.notes, doc.uploadedByUserId, doc.uploadedByUsername],
                         (err) => err ? reject(err) : resolve()
@@ -415,7 +455,7 @@ class ChangeRequestService {
 
         // 3. Mark request as approved
         return await new Promise((resolve, reject) => {
-            db.run(`UPDATE supplier_change_requests SET status = 'APPROVED', reviewedByUserId = ?, reviewedAt = CURRENT_TIMESTAMP WHERE requestId = ?`,
+            db.run(`UPDATE supplier_change_requests SET status = 'APPROVED', reviewedbyuserid = ?, reviewedat = CURRENT_TIMESTAMP WHERE requestid = ?`,
                 [approverId, requestId],
                 async (err) => {
                     if (err) return reject(err);
@@ -448,7 +488,7 @@ class ChangeRequestService {
         values.push(supplierId);
 
         await new Promise((resolve, reject) => {
-            db.run(`UPDATE suppliers SET ${setClause} WHERE supplierId = ?`, values, (err) => err ? reject(err) : resolve());
+            db.run(`UPDATE suppliers SET ${setClause} WHERE supplierid = ?`, values, (err) => err ? reject(err) : resolve());
         });
 
         await AuditService.logChange(supplierId, 'AUTO_UPDATE', requestId, 'CHANGE_REQUEST', updates, approverId, 'SYSTEM');
@@ -456,7 +496,7 @@ class ChangeRequestService {
 
     static async getChangeRequestById(requestId) {
         return new Promise((resolve, reject) => {
-            db.get(`SELECT requestId as "requestId", supplierId as "supplierId", requestType as "requestType", status, requestedByUserId as "requestedByUserId", requestedAt as "requestedAt", reviewedByUserId as "reviewedByUserId", reviewedAt as "reviewedAt", rejectionReason as "rejectionReason", buyerId as "buyerId" FROM supplier_change_requests WHERE requestId = ?`, [requestId], (err, row) => {
+            db.get(`SELECT requestid as "requestId", supplierid as "supplierId", requesttype as "requestType", status, requestedbyuserid as "requestedByUserId", requestedat as "requestedAt", reviewedbyuserid as "reviewedByUserId", reviewedat as "reviewedAt", rejectionreason as "rejectionReason", buyerid as "buyerId" FROM supplier_change_requests WHERE requestid = ?`, [requestId], (err, row) => {
                 if (err) return reject(err);
                 if (!row) return resolve(null);
 
@@ -474,7 +514,7 @@ class ChangeRequestService {
                     buyerId: row.buyerId || row.buyerid
                 };
 
-                db.all(`SELECT itemId as "itemId", requestId as "requestId", fieldName as "fieldName", oldValue as "oldValue", newValue as "newValue", changeCategory as "changeCategory", status, rejectionReason as "rejectionReason", reviewedByUserId as "reviewedByUserId", reviewedAt as "reviewedAt" FROM supplier_change_items WHERE requestId = ?`, [requestId], (err, items) => {
+                db.all(`SELECT itemid as "itemId", requestid as "requestId", fieldname as "fieldName", oldvalue as "oldValue", newvalue as "newValue", changecategory as "changeCategory", status, rejectionreason as "rejectionReason", reviewedbyuserid as "reviewedByUserId", reviewedat as "reviewedAt" FROM supplier_change_items WHERE requestid = ?`, [requestId], (err, items) => {
                     if (err) return reject(err);
                     normalizedRow.items = (items || []).map(i => ({
                         itemId: i.itemId || i.itemid,
@@ -507,8 +547,8 @@ class ChangeRequestService {
             db.all(`
                 SELECT i.itemId as "itemId", i.requestId as "requestId", i.fieldName as "fieldName", i.oldValue as "oldValue", i.newValue as "newValue", i.changeCategory as "changeCategory", i.status
                 FROM supplier_change_items i
-                JOIN supplier_change_requests r ON i.requestId = r.requestId
-                WHERE r.supplierId = ? AND r.status = 'PENDING' AND (i.status = 'PENDING' OR i.status IS NULL)
+                JOIN supplier_change_requests r ON i.requestid = r.requestid
+                WHERE r.supplierid = ? AND r.status = 'PENDING' AND (i.status = 'PENDING' OR i.status IS NULL)
             `, [supplierId], (err, rows) => err ? reject(err) : resolve(rows || []));
         });
 
@@ -527,12 +567,13 @@ class ChangeRequestService {
             // Admin approves ALL pending
             targetItemIds = allPendingItems.map(i => i.itemId || i.itemid);
         } else {
-            // Specific Role approves ONLY their fields
+            // Specific Role approves ONLY their fields (strict).
+            // No more 'Shared' pass-through: each field must match the approver role.
             targetItemIds = allPendingItems
                 .filter(i => {
                     const fieldName = i.fieldname || i.fieldName;
                     const requiredRole = this.getFieldRole(fieldName);
-                    if (requiredRole === 'Shared') return true;
+                    if (!requiredRole || requiredRole === 'Admin') return false;
                     return approverRole.toLowerCase().includes(requiredRole.toLowerCase());
                 })
                 .map(i => i.itemid || i.itemId);
@@ -578,7 +619,7 @@ class ChangeRequestService {
         for (const req of requests) {
             // Check if it has any pending items
             const pendingCount = await new Promise(resolve => {
-                db.get(`SELECT COUNT(*) as count FROM supplier_change_items WHERE requestId = ? AND status = 'PENDING'`, [req.requestId], (err, row) => resolve(row ? row.count : 0));
+                db.get(`SELECT COUNT(*) as count FROM supplier_change_items WHERE requestid = ? AND status = 'PENDING'`, [req.requestId], (err, row) => resolve(row ? row.count : 0));
             });
 
             if (pendingCount == 0) {
@@ -601,8 +642,8 @@ class ChangeRequestService {
                 db.run(`
                     UPDATE supplier_change_items 
                     SET status = 'REJECTED', reviewedByUserId = ?, reviewedAt = CURRENT_TIMESTAMP
-                    WHERE status = 'PENDING' AND requestId IN (
-                        SELECT requestId FROM supplier_change_requests WHERE supplierId = ? AND status = 'PENDING'
+                    WHERE status = 'PENDING' AND requestid IN (
+                        SELECT requestid FROM supplier_change_requests WHERE supplierid = ? AND status = 'PENDING'
                     )
                 `, [approverId, supplierId], (err) => {
                     if (err) return reject(err);
@@ -610,8 +651,8 @@ class ChangeRequestService {
                     // 2. Mark all pending requests as REJECTED
                     db.run(`
                         UPDATE supplier_change_requests 
-                        SET status = 'REJECTED', reviewedByUserId = ?, reviewedAt = CURRENT_TIMESTAMP, rejectionReason = ? 
-                        WHERE supplierId = ? AND status = 'PENDING'
+                        SET status = 'REJECTED', reviewedbyuserid = ?, reviewedat = CURRENT_TIMESTAMP, rejectionreason = ? 
+                        WHERE supplierid = ? AND status = 'PENDING'
                     `, [approverId, reason, supplierId], (err) => {
                         if (err) return reject(err);
 

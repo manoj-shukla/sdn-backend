@@ -17,7 +17,8 @@ class InvitationController {
             if (isNaN(buyerId)) return res.status(400).json({ error: "Invalid buyerId" });
 
             // Security Check: Ensure user can only access their own buyer's invitations
-            if (req.user.role !== 'ADMIN' && req.user.buyerId !== buyerId) {
+            const requesterBuyerId = req.user.buyerid || req.user.buyerId;
+            if (req.user.role !== 'ADMIN' && String(requesterBuyerId) !== String(buyerId)) {
                 return res.status(403).json({ error: "Forbidden: You can only view invitations for your own organization." });
             }
 
@@ -66,7 +67,7 @@ class InvitationController {
 
     static async revokeInvitation(req, res) {
         try {
-            const buyerId = req.user.role === 'ADMIN' ? null : req.user.buyerId;
+            const buyerId = req.user.role === 'ADMIN' ? null : (req.user.buyerid || req.user.buyerId);
             const result = await InvitationService.revokeInvitation(req.params.invitationId, buyerId);
             res.json(result);
         } catch (err) {
@@ -77,7 +78,7 @@ class InvitationController {
 
     static async resendInvitation(req, res) {
         try {
-            const buyerId = req.user.role === 'ADMIN' ? null : req.user.buyerId;
+            const buyerId = req.user.role === 'ADMIN' ? null : (req.user.buyerid || req.user.buyerId);
             const result = await InvitationService.resendInvitation(req.params.invitationId, buyerId);
             res.json(result);
         } catch (err) {
