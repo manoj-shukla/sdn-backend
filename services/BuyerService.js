@@ -38,18 +38,97 @@ class BuyerService {
         });
     }
 
+    /**
+     * Check whether a proposed buyer identity is available.
+     *
+     * Looks at BOTH tables used by the create-buyer flow so we can surface
+     * conflicts upfront (before committing any row):
+     *   - buyers.buyername  / buyers.buyercode / buyers.email
+     *   - sdn_users.username / sdn_users.email
+     *
+     * @param {Object} opts  { buyerName, buyerCode, email }
+     * @returns {Promise<{
+     *     available: boolean,
+     *     conflicts: {
+     *         buyerName?: boolean,
+     *         buyerCode?: boolean,
+     *         email?: boolean,
+     *         username?: boolean
+     *     }
+     * }>}
+     */
+    static async checkAvailability({ buyerName, buyerCode, email } = {}) {
+        const conflicts = {};
+
+        const buyersRow = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT buyername, buyercode, email FROM buyers
+                 WHERE (? IS NOT NULL AND buyername = ?)
+                    OR (? IS NOT NULL AND buyercode = ?)
+                    OR (? IS NOT NULL AND email = ?)
+                 LIMIT 1`,
+                [buyerName || null, buyerName || null, buyerCode || null, buyerCode || null, email || null, email || null],
+                (err, row) => (err ? reject(err) : resolve(row || null))
+            );
+        });
+
+        if (buyersRow) {
+            if (buyerName && buyersRow.buyername === buyerName) conflicts.buyerName = true;
+            if (buyerCode && buyersRow.buyercode === buyerCode) conflicts.buyerCode = true;
+            if (email && buyersRow.email === email) conflicts.email = true;
+        }
+
+        // The create-buyer flow uses buyerName as the sdn_users.username. So we
+        // must also check that table to avoid the partial-creation race where
+        // buyers gets inserted but the follow-up sdn_users INSERT fails with a
+        // UNIQUE constraint violation.
+        const usersRow = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT username, email FROM sdn_users
+                 WHERE (? IS NOT NULL AND username = ?)
+                    OR (? IS NOT NULL AND email = ?)
+                 LIMIT 1`,
+                [buyerName || null, buyerName || null, email || null, email || null],
+                (err, row) => (err ? reject(err) : resolve(row || null))
+            );
+        });
+
+        if (usersRow) {
+            if (buyerName && usersRow.username === buyerName) conflicts.username = true;
+            if (email && usersRow.email === email) conflicts.email = true;
+        }
+
+        return {
+            available: Object.keys(conflicts).length === 0,
+            conflicts,
+        };
+    }
+
     static async createBuyer(data) {
+        const { buyerName, buyerCode, email, phone, country, password, isSandboxActive } = data;
+
+        if (!isValidEmail(email)) {
+            throw new Error("Invalid email format");
+        }
+
+        // Pre-flight uniqueness check across BOTH buyers and sdn_users.
+        // Without the sdn_users check we hit a nasty partial-creation bug: the
+        // buyer row commits, then the sdn_users INSERT fails with a UNIQUE
+        // constraint violation, leaving an orphan buyer with no admin user.
+        const { available, conflicts } = await BuyerService.checkAvailability({ buyerName, buyerCode, email });
+        if (!available) {
+            if (conflicts.email) throw new Error("Email is already taken");
+            if (conflicts.buyerCode) throw new Error("Buyer code is already taken");
+            // buyerName OR username collision both surface as the same message
+            throw new Error("Username is already taken");
+        }
+
         return new Promise((resolve, reject) => {
-            const { buyerName, buyerCode, email, phone, country, password, isSandboxActive } = data;
-
-            if (!isValidEmail(email)) {
-                return reject(new Error("Invalid email format"));
-            }
-
-            const defaultPassword = password || "SDNtech123!";
             const sandboxActive = isSandboxActive === true || isSandboxActive === 'true';
 
-            // Duplicate Validation Check
+            // Duplicate Validation Check (defence-in-depth — race-safe net in
+            // case another request commits between our checkAvailability call
+            // above and the INSERT below).
             db.get(`SELECT buyerid FROM buyers WHERE buyername = ? OR buyercode = ? OR email = ?`, [buyerName, buyerCode, email], (err, row) => {
                 if (err) return reject(err);
                 if (row) return reject(new Error("Username is already taken"));
@@ -88,7 +167,18 @@ class BuyerService {
                                 [buyerName, email, 'BUYER', 'Buyer Admin', buyerId, hash],
                                 async function (userErr) {
                                     if (userErr) {
-                                        return db.get("SELECT * FROM buyers WHERE buyerid = ?", [buyerId], (err, row) => resolve({ ...row, userCreated: false, error: "Failed to create admin user" }));
+                                        // Roll back the orphan buyer row so we don't leave
+                                        // a buyer record without an admin user. This should
+                                        // only fire on a race against another create (the
+                                        // pre-flight checkAvailability covered the normal case).
+                                        const msg = /uniq|duplicate/i.test(userErr.message || '')
+                                            ? "Username is already taken"
+                                            : "Failed to create admin user";
+                                        return db.run(
+                                            "DELETE FROM buyers WHERE buyerid = ?",
+                                            [buyerId],
+                                            () => reject(new Error(msg))
+                                        );
                                     }
 
                                     // Seed Defaults

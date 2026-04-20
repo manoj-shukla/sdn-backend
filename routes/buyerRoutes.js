@@ -6,6 +6,12 @@ const { authenticateToken, requireRole } = require('../middleware/authMiddleware
 
 router.get('/', authenticateToken, BuyerController.getAllBuyers);
 router.post('/', authenticateToken, BuyerController.createBuyer);
+
+// Upfront uniqueness check — used by the admin "Create Buyer" form to validate
+// before the user clicks Save. Must be registered BEFORE /:id or Express will
+// treat "check-availability" as a buyerId.
+router.get('/check-availability', authenticateToken, BuyerController.checkAvailability);
+
 router.get('/:id', authenticateToken, BuyerController.getBuyerById);
 router.put('/:id', authenticateToken, BuyerController.updateBuyer);
 

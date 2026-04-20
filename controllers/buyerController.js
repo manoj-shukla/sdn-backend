@@ -15,6 +15,42 @@ class BuyerController {
             const result = await BuyerService.createBuyer(req.body);
             res.json(result);
         } catch (err) {
+            // Conflict-style errors are 409, not 500. The frontend uses the
+            // exact `error` string to render specific messages.
+            const conflictMessages = [
+                "Username is already taken",
+                "Email is already taken",
+                "Buyer code is already taken",
+            ];
+            const status = conflictMessages.includes(err.message)
+                ? 409
+                : err.message === "Invalid email format"
+                ? 400
+                : 500;
+            res.status(status).json({ error: err.message });
+        }
+    }
+
+    /**
+     * GET /api/buyers/check-availability?buyerName=...&buyerCode=...&email=...
+     *
+     * Lightweight pre-flight check used by the admin "Create Buyer" form to
+     * tell the user whether their chosen identity will collide BEFORE they
+     * submit. Returns { available: boolean, conflicts: { ... } }.
+     */
+    static async checkAvailability(req, res) {
+        try {
+            const { buyerName, buyerCode, email } = req.query || {};
+            if (!buyerName && !buyerCode && !email) {
+                return res.status(400).json({ error: "Provide at least one of buyerName, buyerCode, email" });
+            }
+            const result = await BuyerService.checkAvailability({
+                buyerName: buyerName ? String(buyerName).trim() : undefined,
+                buyerCode: buyerCode ? String(buyerCode).trim() : undefined,
+                email: email ? String(email).trim() : undefined,
+            });
+            res.json(result);
+        } catch (err) {
             res.status(500).json({ error: err.message });
         }
     }
