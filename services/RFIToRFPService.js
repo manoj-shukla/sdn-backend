@@ -24,13 +24,39 @@ class RFIToRFPService {
             throw new Error('RFI must be CLOSED or CONVERTED before creating an RFP');
         }
 
-        // 2. Get shortlisted suppliers — with self-heal for missing evaluation_status column
+        // 2. Resolve which suppliers to pre-invite into the RFP.
+        //
+        // Strategy (in priority order):
+        //   (a) If the buyer has explicitly SHORTLISTED any responses, use those.
+        //       This preserves the curated workflow for buyers who evaluated.
+        //   (b) Otherwise, fall back to ALL suppliers invited to the RFI (from
+        //       rfi_invitation). This handles the common case where a buyer
+        //       invites suppliers, closes the RFI without doing evaluation,
+        //       and converts straight to RFP — they expect the same suppliers
+        //       to carry over.
+        //
+        // Without (b), an RFP created from an un-evaluated RFI would always
+        // have an empty supplier list, which is the bug we're fixing.
+
         const fetchShortlisted = () => new Promise((res) => {
             db.all(
                 `SELECT r.supplier_id, s.legalname AS supplier_name, s.email AS supplier_email
                  FROM supplier_rfi_response r
                  JOIN suppliers s ON r.supplier_id = s.supplierid
                  WHERE r.rfi_id = ? AND r.evaluation_status = 'SHORTLISTED'`,
+                [rfiId],
+                (err, rows) => res({ err, rows: rows || [] })
+            );
+        });
+
+        const fetchInvited = () => new Promise((res) => {
+            db.all(
+                `SELECT DISTINCT i.supplier_id,
+                                 s.legalname AS supplier_name,
+                                 COALESCE(s.email, i.guest_email) AS supplier_email
+                 FROM rfi_invitation i
+                 LEFT JOIN suppliers s ON i.supplier_id = s.supplierid
+                 WHERE i.rfi_id = ? AND i.supplier_id IS NOT NULL`,
                 [rfiId],
                 (err, rows) => res({ err, rows: rows || [] })
             );
@@ -49,6 +75,17 @@ class RFIToRFPService {
             } else {
                 console.warn(`[RFIToRFPService] Could not fetch shortlisted suppliers: ${shortlistErr.message}`);
                 shortlisted = [];
+            }
+        }
+
+        // (b) Fallback to invited suppliers when no shortlist exists.
+        if (!shortlisted || shortlisted.length === 0) {
+            const { err: invErr, rows: invited } = await fetchInvited();
+            if (invErr) {
+                console.warn(`[RFIToRFPService] Could not fetch invited suppliers: ${invErr.message}`);
+            } else if (invited.length > 0) {
+                console.log(`[RFIToRFPService] No shortlist for RFI ${rfiId}; falling back to ${invited.length} invited suppliers`);
+                shortlisted = invited;
             }
         }
 
@@ -139,7 +176,10 @@ class RFIToRFPService {
      * Called when recovery detects an RFP with 0 suppliers.
      */
     static async syncShortlistedSuppliers(rfiId, rfpId) {
-        const shortlisted = await new Promise((res) => {
+        // Same two-tier resolution as convertRFIToRFP:
+        //   1. Use SHORTLISTED responses if they exist.
+        //   2. Otherwise, fall back to ALL invited suppliers from rfi_invitation.
+        let shortlisted = await new Promise((res) => {
             db.all(
                 `SELECT r.supplier_id, s.legalname AS supplier_name, s.email AS supplier_email
                  FROM supplier_rfi_response r
@@ -156,6 +196,31 @@ class RFIToRFPService {
                 }
             );
         });
+
+        if (!shortlisted || shortlisted.length === 0) {
+            const invited = await new Promise((res) => {
+                db.all(
+                    `SELECT DISTINCT i.supplier_id,
+                                     s.legalname AS supplier_name,
+                                     COALESCE(s.email, i.guest_email) AS supplier_email
+                     FROM rfi_invitation i
+                     LEFT JOIN suppliers s ON i.supplier_id = s.supplierid
+                     WHERE i.rfi_id = ? AND i.supplier_id IS NOT NULL`,
+                    [rfiId],
+                    (err, rows) => {
+                        if (err) {
+                            console.error(`[RFIToRFPService] syncShortlistedSuppliers invited query FAILED: ${err.message}`);
+                            return res([]);
+                        }
+                        res(rows || []);
+                    }
+                );
+            });
+            if (invited.length > 0) {
+                console.log(`[RFIToRFPService] syncShortlistedSuppliers: falling back to ${invited.length} invited suppliers for RFI ${rfiId}`);
+                shortlisted = invited;
+            }
+        }
 
         let inserted = 0;
         for (const s of shortlisted) {

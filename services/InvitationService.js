@@ -172,8 +172,19 @@ class InvitationService {
                                     (err) => {
                                         if (err) return reject(err);
 
-                                        // 5. Create Membership
-                                        db.run(`INSERT INTO user_supplier_memberships (userid, supplierid) VALUES (?, ?)`,
+                                        // 5. Create Membership — idempotent upsert.
+                                        // Duplicate (userid, supplierid) pairs can occur when:
+                                        //  - The client retries / double-submits the accept endpoint.
+                                        //  - An invitation is resent and re-accepted.
+                                        //  - The migration backfill (config/database.js) pre-populated
+                                        //    the membership from sdn_users before this flow runs.
+                                        // ON CONFLICT matches the pattern used by the backfill and
+                                        // the membership tests, and safely re-activates an existing
+                                        // (possibly deactivated) membership instead of throwing.
+                                        db.run(`INSERT INTO user_supplier_memberships (userid, supplierid, isactive)
+                                                VALUES (?, ?, TRUE)
+                                                ON CONFLICT (userid, supplierid)
+                                                DO UPDATE SET isactive = TRUE`,
                                             [targetUserId, supplierId],
                                             async (err) => {
                                                 if (err) return reject(err);
