@@ -12,6 +12,7 @@ router.get('/bulk-upload/:jobId', authenticateToken, SupplierController.getBulkU
 
 // Base Suppliers
 router.get('/', authenticateToken, denyRole('ADMIN'), SupplierController.getAllSuppliers);
+router.get('/check-availability', authenticateToken, SupplierController.checkAvailability);
 
 // Create supplier - with validation
 router.post('/', authenticateToken, denyRole('ADMIN'), validateMiddleware('supplier'), (req, res, next) => {

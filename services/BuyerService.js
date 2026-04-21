@@ -60,53 +60,44 @@ class BuyerService {
     static async checkAvailability({ buyerName, buyerCode, email } = {}) {
         const conflicts = {};
 
-        // Compare case-insensitively. Postgres text equality is case-sensitive
-        // by default, which caused a real bug: admin types "TCS" but the DB
-        // has "tcs", the SELECT misses, the UI flashes green, and the INSERT
-        // then fails at a unique-index / sdn_users level — surfacing as a
-        // generic error toast instead of inline feedback. LOWER() on both
-        // sides aligns the pre-flight check with how real-world collisions
-        // (TCS vs tcs vs Tcs, admin@x.com vs Admin@X.com) actually behave.
         const nameKey = buyerName ? String(buyerName).trim().toLowerCase() : null;
         const codeKey = buyerCode ? String(buyerCode).trim().toLowerCase() : null;
         const emailKey = email ? String(email).trim().toLowerCase() : null;
 
-        const buyersRow = await new Promise((resolve, reject) => {
-            db.get(
+        // Check buyers table for name, code, or email collisions.
+        // We use db.all to ensure we catch ALL conflicts, not just the first one the DB finds.
+        const buyersRows = await new Promise((resolve, reject) => {
+            db.all(
                 `SELECT buyername, buyercode, email FROM buyers
                  WHERE (? IS NOT NULL AND LOWER(buyername) = ?)
                     OR (? IS NOT NULL AND LOWER(buyercode) = ?)
-                    OR (? IS NOT NULL AND LOWER(email) = ?)
-                 LIMIT 1`,
+                    OR (? IS NOT NULL AND LOWER(email) = ?)`,
                 [nameKey, nameKey, codeKey, codeKey, emailKey, emailKey],
-                (err, row) => (err ? reject(err) : resolve(row || null))
+                (err, rows) => (err ? reject(err) : resolve(rows || []))
             );
         });
 
-        if (buyersRow) {
-            if (nameKey && String(buyersRow.buyername || '').toLowerCase() === nameKey) conflicts.buyerName = true;
-            if (codeKey && String(buyersRow.buyercode || '').toLowerCase() === codeKey) conflicts.buyerCode = true;
-            if (emailKey && String(buyersRow.email || '').toLowerCase() === emailKey) conflicts.email = true;
+        for (const row of buyersRows) {
+            if (nameKey && String(row.buyername || '').toLowerCase() === nameKey) conflicts.buyerName = true;
+            if (codeKey && String(row.buyercode || '').toLowerCase() === codeKey) conflicts.buyerCode = true;
+            if (emailKey && String(row.email || '').toLowerCase() === emailKey) conflicts.email = true;
         }
 
-        // The create-buyer flow uses buyerName as the sdn_users.username. So we
-        // must also check that table to avoid the partial-creation race where
-        // buyers gets inserted but the follow-up sdn_users INSERT fails with a
-        // UNIQUE constraint violation.
-        const usersRow = await new Promise((resolve, reject) => {
-            db.get(
+        // Check sdn_users table for username or email collisions.
+        // The create-buyer flow uses buyerName as the sdn_users.username.
+        const usersRows = await new Promise((resolve, reject) => {
+            db.all(
                 `SELECT username, email FROM sdn_users
                  WHERE (? IS NOT NULL AND LOWER(username) = ?)
-                    OR (? IS NOT NULL AND LOWER(email) = ?)
-                 LIMIT 1`,
+                    OR (? IS NOT NULL AND LOWER(email) = ?)`,
                 [nameKey, nameKey, emailKey, emailKey],
-                (err, row) => (err ? reject(err) : resolve(row || null))
+                (err, rows) => (err ? reject(err) : resolve(rows || []))
             );
         });
 
-        if (usersRow) {
-            if (nameKey && String(usersRow.username || '').toLowerCase() === nameKey) conflicts.username = true;
-            if (emailKey && String(usersRow.email || '').toLowerCase() === emailKey) conflicts.email = true;
+        for (const row of usersRows) {
+            if (nameKey && String(row.username || '').toLowerCase() === nameKey) conflicts.username = true;
+            if (emailKey && String(row.email || '').toLowerCase() === emailKey) conflicts.email = true;
         }
 
         return {

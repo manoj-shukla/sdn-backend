@@ -3,6 +3,54 @@ const WorkflowService = require('./WorkflowService');
 const { isValidEmail } = require('../utils/validation');
 
 class SupplierService {
+    static async checkAvailability({ email, internalCode, buyerId } = {}) {
+        const conflicts = {};
+
+        const emailKey = email ? String(email).trim().toLowerCase() : null;
+        const codeKey = internalCode ? String(internalCode).trim().toLowerCase() : null;
+
+        if (!emailKey && !codeKey) return { available: true, conflicts: {} };
+
+        // Check for collisions in suppliers and invitations.
+        // We scope by buyerId where relevant, but email usually should be unique system-wide
+        // for login purposes if they were to become a user.
+        const suppliers = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT legalname, email, internalcode FROM suppliers
+                 WHERE (? IS NOT NULL AND LOWER(email) = ?)
+                    OR (? IS NOT NULL AND LOWER(internalcode) = ? AND (buyerid = ? OR buyerid IS NULL))`,
+                [emailKey, emailKey, codeKey, codeKey, buyerId],
+                (err, rows) => (err ? reject(err) : resolve(rows || []))
+            );
+        });
+
+        for (const row of suppliers) {
+            if (emailKey && String(row.email || '').toLowerCase() === emailKey) conflicts.email = true;
+            if (codeKey && String(row.internalcode || '').toLowerCase() === codeKey) conflicts.internalCode = true;
+        }
+
+        const invitations = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT email, internalcode FROM invitations
+                 WHERE status NOT IN ('REVOKED', 'EXPIRED', 'ACCEPTED')
+                   AND ((? IS NOT NULL AND LOWER(email) = ?)
+                    OR (? IS NOT NULL AND LOWER(internalcode) = ? AND (buyerid = ? OR buyerid IS NULL)))`,
+                [emailKey, emailKey, codeKey, codeKey, buyerId],
+                (err, rows) => (err ? reject(err) : resolve(rows || []))
+            );
+        });
+
+        for (const row of invitations) {
+            if (emailKey && String(row.email || '').toLowerCase() === emailKey) conflicts.email = true;
+            if (codeKey && String(row.internalcode || '').toLowerCase() === codeKey) conflicts.internalCode = true;
+        }
+
+        return {
+            available: Object.keys(conflicts).length === 0,
+            conflicts,
+        };
+    }
+
     static async getAllSuppliers(user) {
         return new Promise((resolve, reject) => {
             let query = `

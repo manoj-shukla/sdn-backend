@@ -15,6 +15,21 @@ class SupplierController {
         } catch (err) { res.status(500).json({ error: err.message }); }
     }
 
+    static async checkAvailability(req, res) {
+        try {
+            const { email, internalCode } = req.query || {};
+            const buyerId = req.user?.buyerId || req.user?.buyerid;
+            const result = await SupplierService.checkAvailability({
+                email: email ? String(email).trim() : undefined,
+                internalCode: internalCode ? String(internalCode).trim() : undefined,
+                buyerId
+            });
+            res.json(result);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    }
+
     static async getSupplierById(req, res) {
         try {
             const result = await SupplierService.getSupplierById(req.params.id, req.user);
