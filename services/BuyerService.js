@@ -60,22 +60,33 @@ class BuyerService {
     static async checkAvailability({ buyerName, buyerCode, email } = {}) {
         const conflicts = {};
 
+        // Compare case-insensitively. Postgres text equality is case-sensitive
+        // by default, which caused a real bug: admin types "TCS" but the DB
+        // has "tcs", the SELECT misses, the UI flashes green, and the INSERT
+        // then fails at a unique-index / sdn_users level — surfacing as a
+        // generic error toast instead of inline feedback. LOWER() on both
+        // sides aligns the pre-flight check with how real-world collisions
+        // (TCS vs tcs vs Tcs, admin@x.com vs Admin@X.com) actually behave.
+        const nameKey = buyerName ? String(buyerName).trim().toLowerCase() : null;
+        const codeKey = buyerCode ? String(buyerCode).trim().toLowerCase() : null;
+        const emailKey = email ? String(email).trim().toLowerCase() : null;
+
         const buyersRow = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT buyername, buyercode, email FROM buyers
-                 WHERE (? IS NOT NULL AND buyername = ?)
-                    OR (? IS NOT NULL AND buyercode = ?)
-                    OR (? IS NOT NULL AND email = ?)
+                 WHERE (? IS NOT NULL AND LOWER(buyername) = ?)
+                    OR (? IS NOT NULL AND LOWER(buyercode) = ?)
+                    OR (? IS NOT NULL AND LOWER(email) = ?)
                  LIMIT 1`,
-                [buyerName || null, buyerName || null, buyerCode || null, buyerCode || null, email || null, email || null],
+                [nameKey, nameKey, codeKey, codeKey, emailKey, emailKey],
                 (err, row) => (err ? reject(err) : resolve(row || null))
             );
         });
 
         if (buyersRow) {
-            if (buyerName && buyersRow.buyername === buyerName) conflicts.buyerName = true;
-            if (buyerCode && buyersRow.buyercode === buyerCode) conflicts.buyerCode = true;
-            if (email && buyersRow.email === email) conflicts.email = true;
+            if (nameKey && String(buyersRow.buyername || '').toLowerCase() === nameKey) conflicts.buyerName = true;
+            if (codeKey && String(buyersRow.buyercode || '').toLowerCase() === codeKey) conflicts.buyerCode = true;
+            if (emailKey && String(buyersRow.email || '').toLowerCase() === emailKey) conflicts.email = true;
         }
 
         // The create-buyer flow uses buyerName as the sdn_users.username. So we
@@ -85,17 +96,17 @@ class BuyerService {
         const usersRow = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT username, email FROM sdn_users
-                 WHERE (? IS NOT NULL AND username = ?)
-                    OR (? IS NOT NULL AND email = ?)
+                 WHERE (? IS NOT NULL AND LOWER(username) = ?)
+                    OR (? IS NOT NULL AND LOWER(email) = ?)
                  LIMIT 1`,
-                [buyerName || null, buyerName || null, email || null, email || null],
+                [nameKey, nameKey, emailKey, emailKey],
                 (err, row) => (err ? reject(err) : resolve(row || null))
             );
         });
 
         if (usersRow) {
-            if (buyerName && usersRow.username === buyerName) conflicts.username = true;
-            if (email && usersRow.email === email) conflicts.email = true;
+            if (nameKey && String(usersRow.username || '').toLowerCase() === nameKey) conflicts.username = true;
+            if (emailKey && String(usersRow.email || '').toLowerCase() === emailKey) conflicts.email = true;
         }
 
         return {
@@ -128,8 +139,16 @@ class BuyerService {
 
             // Duplicate Validation Check (defence-in-depth — race-safe net in
             // case another request commits between our checkAvailability call
-            // above and the INSERT below).
-            db.get(`SELECT buyerid FROM buyers WHERE buyername = ? OR buyercode = ? OR email = ?`, [buyerName, buyerCode, email], (err, row) => {
+            // above and the INSERT below). Case-insensitive to match how the
+            // upstream pre-flight check works.
+            const nameKey = String(buyerName || '').trim().toLowerCase();
+            const codeKey = String(buyerCode || '').trim().toLowerCase();
+            const emailKey = String(email || '').trim().toLowerCase();
+            db.get(
+                `SELECT buyerid FROM buyers
+                 WHERE LOWER(buyername) = ? OR LOWER(buyercode) = ? OR LOWER(email) = ?`,
+                [nameKey, codeKey, emailKey],
+                (err, row) => {
                 if (err) return reject(err);
                 if (row) return reject(new Error("Username is already taken"));
 
