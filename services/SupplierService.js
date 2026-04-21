@@ -17,8 +17,8 @@ class SupplierService {
         const suppliers = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT legalname, email, internalcode FROM suppliers
-                 WHERE (? IS NOT NULL AND LOWER(email) = ?)
-                    OR (? IS NOT NULL AND LOWER(internalcode) = ? AND (buyerid = ? OR buyerid IS NULL))`,
+                 WHERE (?::text IS NOT NULL AND LOWER(email) = ?)
+                    OR (?::text IS NOT NULL AND LOWER(internalcode) = ? AND (buyerid = ? OR buyerid IS NULL))`,
                 [emailKey, emailKey, codeKey, codeKey, buyerId],
                 (err, rows) => (err ? reject(err) : resolve(rows || []))
             );
@@ -33,8 +33,8 @@ class SupplierService {
             db.all(
                 `SELECT email, internalcode FROM invitations
                  WHERE status NOT IN ('REVOKED', 'EXPIRED', 'ACCEPTED')
-                   AND ((? IS NOT NULL AND LOWER(email) = ?)
-                    OR (? IS NOT NULL AND LOWER(internalcode) = ? AND (buyerid = ? OR buyerid IS NULL)))`,
+                   AND ((?::text IS NOT NULL AND LOWER(email) = ?)
+                    OR (?::text IS NOT NULL AND LOWER(internalcode) = ? AND (buyerid = ? OR buyerid IS NULL)))`,
                 [emailKey, emailKey, codeKey, codeKey, buyerId],
                 (err, rows) => (err ? reject(err) : resolve(rows || []))
             );

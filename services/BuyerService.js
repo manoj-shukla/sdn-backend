@@ -69,9 +69,9 @@ class BuyerService {
         const buyersRows = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT buyername, buyercode, email FROM buyers
-                 WHERE (? IS NOT NULL AND LOWER(buyername) = ?)
-                    OR (? IS NOT NULL AND LOWER(buyercode) = ?)
-                    OR (? IS NOT NULL AND LOWER(email) = ?)`,
+                 WHERE (?::text IS NOT NULL AND LOWER(buyername) = ?)
+                    OR (?::text IS NOT NULL AND LOWER(buyercode) = ?)
+                    OR (?::text IS NOT NULL AND LOWER(email) = ?)`,
                 [nameKey, nameKey, codeKey, codeKey, emailKey, emailKey],
                 (err, rows) => (err ? reject(err) : resolve(rows || []))
             );
@@ -88,8 +88,8 @@ class BuyerService {
         const usersRows = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT username, email FROM sdn_users
-                 WHERE (? IS NOT NULL AND LOWER(username) = ?)
-                    OR (? IS NOT NULL AND LOWER(email) = ?)`,
+                 WHERE (?::text IS NOT NULL AND LOWER(username) = ?)
+                    OR (?::text IS NOT NULL AND LOWER(email) = ?)`,
                 [nameKey, nameKey, emailKey, emailKey],
                 (err, rows) => (err ? reject(err) : resolve(rows || []))
             );
